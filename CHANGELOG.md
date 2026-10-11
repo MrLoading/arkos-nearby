@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-11
+
+- Add Network Only and Choose Game entries in Options.
+- Keep the nearby network connected while returning to the system and opening LAN games from Ports.
+- Show connected device addresses and restore Wi-Fi when leaving the network.
+- Clear peer addresses after disconnection.
+
 ## [0.3.2] - 2026-10-10
 
 - Keep long game names and connection messages within their panels.

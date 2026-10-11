@@ -296,12 +296,18 @@ fn live_label(
 
 #[compose]
 fn header(view: &View, state: model!(DisplayState), metrics: Metrics) -> Entity {
-    let subtitle = if view.page == Page::Games {
+    let subtitle = if view.page == Page::Mode {
+        "连接附近的掌机".into()
+    } else if view.network_only {
+        "仅组网 · 局域网连接".into()
+    } else if view.page == Page::Games {
         view.core.clone()
     } else {
         format!("当前游戏  {}", view.title)
     };
-    let step = if view.page == Page::Games {
+    let step = if view.page == Page::Mode {
+        "选择模式".into()
+    } else if view.page == Page::Games {
         "选择游戏".into()
     } else {
         format!("步骤 {} / 2", if view.page == Page::Choice { 1 } else { 2 })
@@ -416,7 +422,7 @@ fn footer(view: &View, state: model!(DisplayState), metrics: Metrics) -> Entity 
             )
             Text (
                 text: ${ state.confirm() },
-                width: if metrics.compact { 30 } else { 42 },
+                width: Dimension::Content,
                 shrink: 0.0,
                 height: Dimension::Content,
                 font: FONT,
@@ -427,7 +433,7 @@ fn footer(view: &View, state: model!(DisplayState), metrics: Metrics) -> Entity 
             keycap ("B", metrics)
             Text (
                 text: ${ state.back() },
-                max_width: if metrics.compact { 76 } else { 112 },
+                max_width: if metrics.compact { 130 } else { 210 },
                 min_width: 0,
                 height: Dimension::Content,
                 font: FONT,
@@ -462,7 +468,23 @@ fn footer(view: &View, state: model!(DisplayState), metrics: Metrics) -> Entity 
 }
 
 #[compose]
-fn choice(metrics: Metrics) -> Entity {
+fn choice(view: &View, metrics: Metrics) -> Entity {
+    let cards = if view.page == Page::Mode {
+        [
+            (0, "仅组网", "连接附近的掌机", "返回系统后保持连接"),
+            (1, "选择游戏", "选择要一起玩的游戏", "创建或加入游戏房间"),
+        ]
+    } else if view.network_only {
+        [
+            (0, "创建房间", "邀请好友连接你的掌机", "你是房主"),
+            (1, "加入房间", "寻找附近好友的房间", "建立局域网连接"),
+        ]
+    } else {
+        [
+            (0, "创建房间", "邀请好友加入你的房间", "你是房主"),
+            (1, "加入房间", "寻找附近好友的房间", "一起开始游戏"),
+        ]
+    };
     ui! {
         Row (
             id: "focus_list",
@@ -473,11 +495,7 @@ fn choice(metrics: Metrics) -> Entity {
             StaticCache,
             OffscreenRender::default(),
         ] {
-            walk [
-                (0, "创建房间", "邀请好友加入你的房间", "你是房主"),
-                (1, "加入房间", "寻找附近好友的房间", "一起开始游戏"),
-            ]
-                .into_iter() with card {
+            walk cards.into_iter() with card {
                 Column (
                     grow: 1.0,
                     min_width: 0,
@@ -539,7 +557,7 @@ fn choice(metrics: Metrics) -> Entity {
 }
 
 fn host_action_enabled(view: &View) -> bool {
-    (view.ready || view.phase == Phase::ApprovalPending) && !view.busy
+    (view.ready || view.connected || view.phase == Phase::ApprovalPending) && !view.busy
 }
 
 #[compose]
@@ -638,6 +656,66 @@ fn host(view: &View, state: model!(DisplayState), metrics: Metrics) -> Entity {
                 bg_color: if enabled { ACCENT } else { PANEL },
                 border_color: ACCENT,
                 border_width: if enabled { 2 } else { 0 },
+                justify: JustifyContent::Center
+            ) [
+                FocusTarget,
+            ] {
+                live_label (
+                    state,
+                    HostButton,
+                    metrics.title,
+                    if enabled { BACKGROUND } else { DISABLED },
+                    Center
+                )
+            }
+        }
+    }
+}
+
+#[compose]
+fn network_panel(view: &View, state: model!(DisplayState), metrics: Metrics) -> Entity {
+    let enabled = host_action_enabled(view);
+    let local = if view.local_address.is_empty() {
+        "等待分配地址".into()
+    } else {
+        format!("本机  {}", view.local_address)
+    };
+    let peers = view
+        .peers
+        .iter()
+        .map(|peer| format!("{}  {}", peer.name, peer.address))
+        .collect::<Vec<_>>()
+        .join("\n");
+    ui! {
+        Column (grow: 1.0, min_height: 0, row_gap: metrics.gap) {
+            Column (
+                grow: 1.0,
+                min_height: 0,
+                padding: Padding::all(metrics.inset),
+                bg_color: PANEL,
+                justify: JustifyContent::Center,
+                row_gap: metrics.gap
+            ) {
+                live_label (state, Headline, metrics.title, FOREGROUND, Center)
+                label (&local, metrics.body, SECONDARY, Center)
+                Text (
+                    peers,
+                    width: Dimension::percent(100),
+                    min_width: 0,
+                    height: Dimension::Content,
+                    font: FONT,
+                    font_size: metrics.small,
+                    text_color: SECONDARY,
+                    paragraph: paragraph(Center, 3),
+                    clip_children: true
+                )
+                live_label (state, Next, metrics.small, SECONDARY, Center)
+            }
+            Column (
+                id: "focus_host",
+                height: if metrics.compact { 34 } else { 50 },
+                shrink: 0.0,
+                bg_color: if enabled { ACCENT } else { PANEL },
                 justify: JustifyContent::Center
             ) [
                 FocusTarget,
@@ -1003,6 +1081,8 @@ fn unavailable(metrics: Metrics) -> Entity {
 #[compose]
 fn page(view: &View, state: model!(DisplayState), metrics: Metrics) -> Entity {
     let heading = match view.page {
+        Page::Mode => "选择连接方式",
+        Page::Choice if view.network_only => "和好友建立局域网",
         Page::Choice => "和好友一起，开始游戏",
         Page::Host => {
             if view.room_name.is_empty() {
@@ -1089,15 +1169,17 @@ fn page(view: &View, state: model!(DisplayState), metrics: Metrics) -> Entity {
                     paragraph: paragraph(Start, 2),
                     clip_children: true,
                 )
-                match view.page {
-                    Page::Choice => { choice(metrics) }
+                if view.network_only && matches!(view.page, Page::Host | Page::Joined) {
+                    network_panel(view, state, metrics)
+                } else { match view.page {
+                    Page::Choice | Page::Mode => { choice(view, metrics) }
                     Page::Host => { host(view, state, metrics) }
                     Page::Rooms => { rooms(view, metrics) }
                     Page::Joined => { joined(view, state, metrics) }
                     Page::Leaving => { leaving(state, metrics) }
                     Page::Unavailable => { unavailable(metrics) }
                     Page::Games => { games(view, metrics) }
-                }
+                } }
             }
             View (
                 height: 1,
@@ -1235,6 +1317,9 @@ fn border_bands([x, y, width, height]: [i32; 4]) -> [[i32; 4]; 4] {
 }
 
 fn loading(view: &View) -> bool {
+    if view.network_only && view.connected && view.phase == Phase::NetworkConnected {
+        return view.busy;
+    }
     if matches!(
         phase(view),
         Phase::ApprovalPending
@@ -1278,6 +1363,10 @@ fn phase(view: &View) -> Phase {
 
 fn headline(view: &View) -> &str {
     match phase(view) {
+        Phase::NetworkConfirming => "正在确认连接",
+        Phase::NetworkConnected => "组网已完成",
+        Phase::NetworkReconnecting => "正在等待连接恢复",
+        Phase::ApprovalPendingClient => "等待房主确认",
         Phase::Creating => "正在创建房间",
         Phase::WaitingPeer => "等待好友加入",
         Phase::PeerPreparing => "好友正在准备",
@@ -1298,7 +1387,22 @@ fn headline(view: &View) -> &str {
 }
 
 fn next_step(view: &View) -> &str {
+    if view.network_only {
+        return match phase(view) {
+            Phase::NetworkConnected => "返回系统后，连接继续保持",
+            Phase::NetworkConfirming => "正在确认双方的局域网连接",
+            Phase::NetworkReconnecting => "持续失联后会恢复原 Wi-Fi",
+            Phase::ApprovalPendingClient => "请房主按 A 确认加入",
+            Phase::Connecting => "正在连接房间并获取地址",
+            Phase::Leaving => "正在断开连接并恢复 Wi-Fi",
+            _ => "选择房间，与附近掌机组网",
+        };
+    }
     match phase(view) {
+        Phase::NetworkConnected
+        | Phase::NetworkConfirming
+        | Phase::NetworkReconnecting
+        | Phase::ApprovalPendingClient => "正在确认连接",
         Phase::Creating => "房间准备好后，好友才能加入",
         Phase::WaitingPeer => "请好友选择这个房间加入",
         Phase::PeerPreparing => "准备完成后，可以开始游戏",
@@ -1318,6 +1422,9 @@ fn next_step(view: &View) -> &str {
 }
 
 fn button_text(view: &View) -> &str {
+    if view.network_only && view.connected && view.phase == Phase::NetworkConnected {
+        return "保持连接，返回系统";
+    }
     match phase(view) {
         Phase::HostReady => {
             if view.busy {
@@ -1351,6 +1458,7 @@ fn status_text(view: &View) -> &str {
         return &view.status;
     }
     match view.page {
+        Page::Mode => "请选择仅组网或选择游戏",
         Page::Choice => "两台掌机选择同一款游戏，再创建或加入房间",
         Page::Host => "请好友选择同一款游戏，加入这个房间",
         Page::Rooms => "选择房间后确认加入，列表会自动刷新",
@@ -1362,6 +1470,9 @@ fn status_text(view: &View) -> &str {
 }
 
 fn hint_text(view: &View) -> &str {
+    if view.network_only && view.connected && view.phase == Phase::NetworkConnected {
+        return "连接保持中";
+    }
     if view.page == Page::Games {
         return if view.busy {
             "正在核对游戏"
@@ -1391,6 +1502,9 @@ fn hint_text(view: &View) -> &str {
 }
 
 fn confirm_text(view: &View) -> &str {
+    if view.network_only && view.connected && view.phase == Phase::NetworkConnected && !view.busy {
+        return "返回系统";
+    }
     match phase(view) {
         Phase::RestoreFailed => "重试",
         Phase::RoomActive => "关闭",
@@ -1398,7 +1512,7 @@ fn confirm_text(view: &View) -> &str {
         Phase::HostReady if !view.busy => "开始",
         Phase::ApprovalPending if !view.busy => "确认",
         Phase::Idle => match view.page {
-            Page::Choice => "确认",
+            Page::Choice | Page::Mode => "确认",
             Page::Rooms => "加入",
             Page::Games if !view.busy && !view.entries.is_empty() => "选择",
             _ => "",
@@ -1414,7 +1528,7 @@ fn scene_key(view: &View) -> View {
     key.phase = Phase::Idle;
     key.back_label.clear();
     match view.page {
-        Page::Choice => {
+        Page::Choice | Page::Mode => {
             key.selected = 0;
             key.busy = false;
             key.room_name.clear();
@@ -1442,7 +1556,7 @@ fn scene_key(view: &View) -> View {
             key.busy = host_action_enabled(view);
         }
         Page::Joined | Page::Leaving => {
-            key.busy = false;
+            key.busy = view.network_only && host_action_enabled(view);
             key.ready = false;
         }
         _ => {}
@@ -1457,7 +1571,7 @@ pub fn can_update(previous: &View, next: &View) -> bool {
 #[compose]
 fn focus_rect(view: &View) -> Option<[i32; 4]> {
     let slot = match view.page {
-        Page::Choice => view.selected.min(1),
+        Page::Choice | Page::Mode => view.selected.min(1),
         Page::Rooms if !view.rooms.is_empty() => view
             .selected
             .saturating_sub(
@@ -1468,16 +1582,19 @@ fn focus_rect(view: &View) -> Option<[i32; 4]> {
             .min(3),
         Page::Games if !view.entries.is_empty() => view.selected.min(3),
         Page::Host if host_action_enabled(view) => 0,
+        Page::Joined if view.network_only && host_action_enabled(view) => 0,
         _ => return None,
     };
     let parent = res!(IdMap).with(|ids| {
-        ids.get(if view.page == Page::Host {
-            "focus_host"
-        } else {
-            "focus_list"
-        })
+        ids.get(
+            if view.page == Page::Host || view.network_only && view.page == Page::Joined {
+                "focus_host"
+            } else {
+                "focus_list"
+            },
+        )
     })?;
-    let entity = if view.page == Page::Host {
+    let entity = if view.page == Page::Host || view.network_only && view.page == Page::Joined {
         parent
     } else {
         let children = com!(parent, Children)?.0.clone();

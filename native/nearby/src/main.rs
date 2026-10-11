@@ -16,7 +16,7 @@ fn run(args: &[String]) -> Result<i32> {
         }
         Some("--help") | None => {
             println!(
-                "arkos-nearby install [--interactive]\narkos-nearby uninstall\narkos-nearby update RELEASE_PATH\narkos-nearby doctor\narkos-nearby release-info\narkos-nearby identity show|reset|name NAME\narkos-nearby friends [forget DEVICE_ID]\narkos-nearby menu --frontend <retroarch|retroarch32> -- <launch args>\narkos-nearby action <name> <context.json> <payload.json>\narkos-nearby status\narkos-nearby manual\nWorker modes: worker, serve, game, game-recover, recover <session-id>"
+                "arkos-nearby install [--interactive]\narkos-nearby uninstall\narkos-nearby update RELEASE_PATH\narkos-nearby doctor\narkos-nearby release-info\narkos-nearby identity show|reset|name NAME\narkos-nearby friends [forget DEVICE_ID]\narkos-nearby menu --frontend <retroarch|retroarch32> -- <launch args>\narkos-nearby action <name> <context.json> <payload.json>\narkos-nearby status\narkos-nearby network <status|scan|create|join|approve|detach|cancel> [JSON]\narkos-nearby manual\nWorker modes: worker, serve, game, game-recover, recover <session-id>"
             );
             Ok(0)
         }
@@ -54,6 +54,22 @@ fn run(args: &[String]) -> Result<i32> {
             Ok(if facts.problems().is_empty() { 0 } else { 2 })
         }
         Some("manual") => arkos_nearby::manual::run_manual(),
+        Some("network") if (2..=3).contains(&args.len()) => {
+            let payload = args
+                .get(2)
+                .map(|value| serde_json::from_str::<Value>(value))
+                .transpose()?
+                .unwrap_or_else(|| json!({}));
+            println!(
+                "{}",
+                session::action_for(
+                    &args[1],
+                    &arkos_nearby::purpose::SessionIntent::NetworkOnly,
+                    &payload
+                )?
+            );
+            Ok(0)
+        }
         Some("identity") => {
             let value = match args.get(1).map(String::as_str) {
                 Some("show") => {
@@ -108,6 +124,13 @@ fn run(args: &[String]) -> Result<i32> {
         }
         Some("menu") => {
             session::identity(false)?;
+            if session::state().is_ok_and(|state| {
+                state.purpose == arkos_nearby::purpose::SessionPurpose::NetworkOnly
+                    && (!state.closed() || !state.network_restored)
+            }) && menu::run_network()?
+            {
+                return Ok(0);
+            }
             let mut offset = 1;
             let frontend = if args.get(offset).is_some_and(|v| v == "--frontend") {
                 offset += 2;

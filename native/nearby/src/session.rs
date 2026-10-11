@@ -12,6 +12,7 @@ use crate::content::digest;
 use crate::context::{Context, INSTALL};
 use crate::menu::Backend;
 use crate::protocol::{Profile, Room, VerifiedRoom, hex, mac};
+use crate::purpose::{SessionIntent, SessionPurpose};
 use crate::readiness::ReadyPeer;
 use crate::system::{Lock, command, mkdir, monotonic, private_write, random_id, read, write};
 use crate::{Result, require};
@@ -35,10 +36,22 @@ pub struct RoomEntry {
     pub same_game_hint: bool,
 }
 impl RoomEntry {
+    pub fn purpose(&self) -> SessionPurpose {
+        if self.ssid.starts_with("DIRECT-NW-") {
+            SessionPurpose::NetworkOnly
+        } else {
+            SessionPurpose::Game
+        }
+    }
     pub fn observed(ssid: &str, bssid: &str, signal: i64, sha: &str) -> Option<Self> {
-        let (game, token) = ssid.strip_prefix("DIRECT-NP-")?.split_once('-')?;
+        let (game, token) = if let Some(token) = ssid.strip_prefix("DIRECT-NW-") {
+            (None, token)
+        } else {
+            let (game, token) = ssid.strip_prefix("DIRECT-NP-")?.split_once('-')?;
+            (Some(game), token)
+        };
         let bssid = bssid.to_ascii_lowercase();
-        if !hex(game, 6) || !hex(token, 13) || !mac(&bssid) {
+        if game.is_some_and(|game| !hex(game, 6)) || !hex(token, 13) || !mac(&bssid) {
             return None;
         }
         Some(Self {
@@ -52,7 +65,7 @@ impl RoomEntry {
                 bssid.replace(':', "").chars().skip(6).collect::<String>(),
                 &token[..4]
             ),
-            same_game_hint: sha.starts_with(game),
+            same_game_hint: game.is_some_and(|game| sha.starts_with(game)),
         })
     }
 }
@@ -78,6 +91,8 @@ pub struct State {
     pub stage: String,
     pub step: String,
     pub context_key: Value,
+    #[serde(default)]
+    pub purpose: SessionPurpose,
     pub room: RoomEntry,
     pub original_uuid: String,
     pub radio_before: String,
@@ -113,6 +128,20 @@ impl State {
     }
     pub fn profile(&self) -> String {
         self.unit()
+    }
+    pub fn intent(&self) -> Result<SessionIntent> {
+        match self.purpose {
+            SessionPurpose::Game => Ok(SessionIntent::Game(Box::new(read(
+                &self.root().join("context.json"),
+            )?))),
+            SessionPurpose::NetworkOnly => Ok(SessionIntent::NetworkOnly),
+        }
+    }
+    pub fn established(&self) -> bool {
+        match self.purpose {
+            SessionPurpose::Game => self.phase == "playing",
+            SessionPurpose::NetworkOnly => self.phase == "network_connected",
+        }
     }
     pub fn closed(&self) -> bool {
         matches!(self.phase.as_str(), "closed" | "failed")
@@ -260,6 +289,9 @@ pub fn status(context: Option<&Context>) -> Result<Value> {
             return Ok(json!({"phase":"idle","role":null,"room":null,"ready":false,"step":"idle"}));
         }
     };
+    if state.purpose == SessionPurpose::NetworkOnly {
+        return crate::network::status(&state, context.is_none());
+    }
     let ready = if state.closed() || state.phase == "restoring" {
         false
     } else if state.role == "host" {
@@ -305,6 +337,28 @@ pub fn status(context: Option<&Context>) -> Result<Value> {
 }
 
 pub fn scan(context: &Context, refresh: bool, force: bool) -> Result<Value> {
+    scan_for(
+        &SessionIntent::Game(Box::new(context.clone())),
+        refresh,
+        force,
+    )
+}
+pub fn scan_for(intent: &SessionIntent, refresh: bool, force: bool) -> Result<Value> {
+    let sha = intent
+        .context()
+        .map(|context| context.identity.content.sha256.as_str())
+        .unwrap_or("");
+    let mut result = scan_observations(sha, refresh, force)?;
+    let rooms: Vec<RoomEntry> = serde_json::from_value(result["rooms"].clone())?;
+    result["rooms"] = serde_json::to_value(
+        rooms
+            .into_iter()
+            .filter(|room| room.purpose() == intent.purpose())
+            .collect::<Vec<_>>(),
+    )?;
+    Ok(result)
+}
+fn scan_observations(sha: &str, refresh: bool, force: bool) -> Result<Value> {
     let owner = identity(false)?;
     base()?;
     let _lock = Lock::acquire(&Path::new(BASE).join("scan.lock"))?;
@@ -349,13 +403,9 @@ pub fn scan(context: &Context, refresh: bool, force: bool) -> Result<Value> {
         for line in rows.lines() {
             if let Some((ssid, rest)) = line.split_once(':') {
                 if let Some((bssid, signal)) = rest.rsplit_once(':') {
-                    if let Some(room) = RoomEntry::observed(
-                        ssid,
-                        bssid,
-                        signal.parse().unwrap_or(0),
-                        &context.identity.content.sha256,
-                    )
-                    .filter(|room| room.bssid != owner)
+                    if let Some(room) =
+                        RoomEntry::observed(ssid, bssid, signal.parse().unwrap_or(0), sha)
+                            .filter(|room| room.bssid != owner)
                     {
                         rooms.push(room);
                     }
@@ -407,9 +457,23 @@ fn scan_activity() -> Option<bool> {
 }
 
 pub fn begin(role: &str, context: &Context, selected: Option<RoomEntry>) -> Result<Value> {
+    begin_for(
+        role,
+        &SessionIntent::Game(Box::new(context.clone())),
+        selected,
+    )
+}
+pub fn begin_for(role: &str, intent: &SessionIntent, selected: Option<RoomEntry>) -> Result<Value> {
+    require(matches!(role, "host" | "client"), "Invalid room role")?;
+    if let Some(room) = &selected {
+        require(
+            room.purpose() == intent.purpose(),
+            "Selected room has another purpose",
+        )?;
+    }
     let started = monotonic();
     let owner = identity(true)?;
-    context.revalidate()?;
+    intent.revalidate()?;
     credentials()?;
     let id;
     {
@@ -421,7 +485,7 @@ pub fn begin(role: &str, context: &Context, selected: Option<RoomEntry>) -> Resu
             )?;
             if !existing.closed() {
                 require(
-                    existing.context_key == context.key()
+                    existing.context_key == intent.key()
                         && existing.role == role
                         && (role == "host"
                             || selected
@@ -429,25 +493,33 @@ pub fn begin(role: &str, context: &Context, selected: Option<RoomEntry>) -> Resu
                                 .is_some_and(|room| room.id == existing.room.id)),
                     "Close the active room before choosing another",
                 )?;
-                return status(Some(context));
+                return status_for(intent);
             }
         }
         id = random_id()?;
         let root = Path::new(BASE).join(&id);
         mkdir(&root)?;
         fs::set_permissions(&root, fs::Permissions::from_mode(0o711))?;
-        write(&root.join("context.json"), context)?;
+        if let Some(context) = intent.context() {
+            write(&root.join("context.json"), context)?;
+        }
         let original = cmd(&["nmcli", "-g", "GENERAL.CON-UUID", "device", "show", "wlan0"])?;
         let entry = if role == "host" {
             RoomEntry::observed(
-                &format!(
-                    "DIRECT-NP-{}-{}",
-                    &context.identity.content.sha256[..6],
-                    &id[..13]
-                ),
+                &match intent.context() {
+                    Some(context) => format!(
+                        "DIRECT-NP-{}-{}",
+                        &context.identity.content.sha256[..6],
+                        &id[..13]
+                    ),
+                    None => format!("DIRECT-NW-{}", &id[..13]),
+                },
                 &owner,
                 100,
-                &context.identity.content.sha256,
+                intent
+                    .context()
+                    .map(|c| c.identity.content.sha256.as_str())
+                    .unwrap_or(""),
             )
             .unwrap()
         } else {
@@ -465,7 +537,8 @@ pub fn begin(role: &str, context: &Context, selected: Option<RoomEntry>) -> Resu
             }
             .into(),
             stage: "正在准备无线连接...".into(),
-            context_key: context.key(),
+            context_key: intent.key(),
+            purpose: intent.purpose(),
             room: entry,
             original_uuid: if original == "--" {
                 String::new()
@@ -477,7 +550,7 @@ pub fn begin(role: &str, context: &Context, selected: Option<RoomEntry>) -> Resu
                 .map(|service| best(&["systemctl", "is-active", service]) == "active"),
             driver_owned: false,
             mounts: vec![],
-            game_session: if role == "host" {
+            game_session: if role == "host" && intent.purpose() == SessionPurpose::Game {
                 Some(id.clone())
             } else {
                 None
@@ -528,23 +601,41 @@ pub fn begin(role: &str, context: &Context, selected: Option<RoomEntry>) -> Resu
             return Err(error);
         }
     }
-    status(Some(context))
+    status_for(intent)
 }
 
 pub fn action(name: &str, context: &Context, payload: &Value) -> Result<Value> {
+    action_for(
+        name,
+        &SessionIntent::Game(Box::new(context.clone())),
+        payload,
+    )
+}
+pub fn status_for(intent: &SessionIntent) -> Result<Value> {
+    let mut value = status(intent.context())?;
+    if let Ok(state) = state() {
+        value["context_matches"] =
+            (state.purpose == intent.purpose() && state.context_key == intent.key()).into();
+    }
+    Ok(value)
+}
+pub fn action_for(name: &str, intent: &SessionIntent, payload: &Value) -> Result<Value> {
     identity(false)?;
     match name {
-        "status" => status(Some(context)),
-        "scan" => scan(context, false, false),
-        "scan_refresh" => scan(context, true, payload["force"] == true),
-        "create" => begin("host", context, None),
+        "status" => status_for(intent),
+        "scan" => scan_for(intent, false, false),
+        "scan_refresh" => scan_for(intent, true, payload["force"] == true),
+        "create" => begin_for("host", intent, None),
         "join" => {
             let selected: RoomEntry = serde_json::from_value(payload["room"].clone())?;
             let actual = RoomEntry::observed(
                 &selected.ssid,
                 &selected.bssid,
                 selected.signal,
-                &context.identity.content.sha256,
+                intent
+                    .context()
+                    .map(|c| c.identity.content.sha256.as_str())
+                    .unwrap_or(""),
             )
             .ok_or("Invalid selected room")?;
             require(
@@ -553,7 +644,7 @@ pub fn action(name: &str, context: &Context, payload: &Value) -> Result<Value> {
                     && actual.bssid != identity(false)?,
                 "Selected room identity differs",
             )?;
-            begin("client", context, Some(actual))
+            begin_for("client", intent, Some(actual))
         }
         "approve" => {
             let id = payload["session_id"]
@@ -562,7 +653,7 @@ pub fn action(name: &str, context: &Context, payload: &Value) -> Result<Value> {
             let _lock = lock()?;
             let mut state = current(id)?;
             require(
-                state.role == "host" && state.context_key == context.key(),
+                state.role == "host" && state.context_key == intent.key(),
                 "Approval belongs to another game",
             )?;
             let peer = state
@@ -586,9 +677,12 @@ pub fn action(name: &str, context: &Context, payload: &Value) -> Result<Value> {
             state.pending_pair_kind = None;
             state.stage = "正在连接好友...".into();
             save(&state)?;
-            status(Some(context))
+            status_for(intent)
         }
         "start" => {
+            let context = intent
+                .context()
+                .ok_or("Network-only rooms cannot start games")?;
             context.revalidate()?;
             let id = payload["session_id"]
                 .as_str()
@@ -596,15 +690,30 @@ pub fn action(name: &str, context: &Context, payload: &Value) -> Result<Value> {
             let _lock = lock()?;
             let state = current(id)?;
             require(
-                state.role == "host" && state.context_key == context.key(),
+                state.role == "host" && state.context_key == intent.key(),
                 "Start belongs to another game or session",
             )?;
             live_peer(&state)?;
             private_write(&state.root().join("start-game"), id.as_bytes())?;
-            let mut result = status(Some(context))?;
+            let mut result = status_for(intent)?;
             result["phase"] = "launching".into();
             result["step"] = "starting".into();
             Ok(result)
+        }
+        "detach" => {
+            let id = payload["session_id"]
+                .as_str()
+                .ok_or("Choose the connected session")?;
+            let _lock = lock()?;
+            let state = current(id)?;
+            require(
+                intent.purpose() == SessionPurpose::NetworkOnly
+                    && state.purpose == SessionPurpose::NetworkOnly
+                    && state.established(),
+                "A connected network-only session is required",
+            )?;
+            crate::network::require_live(&state)?;
+            status_for(intent)
         }
         "cancel" => {
             let id = payload["session_id"]
@@ -621,13 +730,16 @@ pub fn action(name: &str, context: &Context, payload: &Value) -> Result<Value> {
 }
 
 pub struct NativeBackend {
-    context: Context,
+    intent: SessionIntent,
     queries: Mutex<()>,
 }
 impl NativeBackend {
     pub fn shared(context: Context) -> Arc<dyn Backend> {
+        Self::for_intent(SessionIntent::Game(Box::new(context)))
+    }
+    pub fn for_intent(intent: SessionIntent) -> Arc<dyn Backend> {
         Arc::new(Self {
-            context,
+            intent,
             queries: Mutex::new(()),
         })
     }
@@ -636,13 +748,13 @@ impl Backend for NativeBackend {
     fn call(&self, action_name: &str, payload: &Value) -> Result<Value> {
         if matches!(action_name, "scan" | "scan_refresh") {
             let _lock = self.queries.lock().map_err(|_| "Scan lock failed")?;
-            action(action_name, &self.context, payload)
+            action_for(action_name, &self.intent, payload)
         } else {
-            action(action_name, &self.context, payload)
+            action_for(action_name, &self.intent, payload)
         }
     }
     fn failure_snapshot(&self) -> Value {
-        status(Some(&self.context)).unwrap_or_else(|_| json!({}))
+        status_for(&self.intent).unwrap_or_else(|_| json!({}))
     }
 }
 
@@ -700,10 +812,26 @@ fn confirmed(state: &State) -> Result<()> {
     Ok(())
 }
 
+pub fn observe_pairing(state: &State, control: &mut crate::radio::Control) -> Result<()> {
+    if let Some(peer) = control.enrollee()? {
+        if state.approved_mac.as_deref() != Some(&peer) {
+            update(&state.id, |state| {
+                state.pending_pair_mac = Some(peer.clone());
+                state.pending_pair_kind = Some(PairingRequest::ProvisionDiscovery);
+                state.stage = format!("好友 {} 加入，按 A 确认。", &peer.replace(':', "")[6..]);
+            })?;
+        }
+    }
+    Ok(())
+}
+
 pub fn worker(id: &str) -> Result<()> {
     identity(true)?;
     let result = (|| -> Result<()> {
         let mut local = current(id)?;
+        if local.purpose == SessionPurpose::NetworkOnly {
+            return crate::network::worker(&local);
+        }
         let context: Context = read(&local.root().join("context.json"))?;
         let mut radio_control = None;
         if local.role == "host" {
@@ -764,18 +892,7 @@ pub fn worker(id: &str) -> Result<()> {
             )?;
             if local.role == "host" {
                 if let Some(control) = &mut radio_control {
-                    if let Some(peer) = control.enrollee()? {
-                        if local.approved_mac.as_deref() != Some(&peer) {
-                            update(id, |state| {
-                                state.pending_pair_mac = Some(peer.clone());
-                                state.pending_pair_kind = Some(PairingRequest::ProvisionDiscovery);
-                                state.stage = format!(
-                                    "好友 {} 加入，按 A 确认。",
-                                    &peer.replace(':', "")[6..]
-                                );
-                            })?;
-                        }
-                    }
+                    observe_pairing(&local, control)?;
                 }
                 require(
                     best(&[
@@ -839,10 +956,7 @@ pub fn worker(id: &str) -> Result<()> {
                     let owner: crate::identity::PublicIdentity =
                         serde_json::from_value(challenge["identity"].clone())?;
                     let identity = crate::identity::load()?;
-                    require(
-                        owner.device_id != identity.public.device_id,
-                        "Another handheld has a cloned identity; reset the cloned device",
-                    )?;
+                    crate::identity::check_owner(&identity.public, &owner, &local.room.bssid)?;
                     require(
                         challenge["session_id"].as_str() == local.game_session.as_deref()
                             && challenge["claim_id"].as_str() == local.claim.as_deref()
@@ -873,17 +987,6 @@ pub fn worker(id: &str) -> Result<()> {
                         challenge["signature"]
                             .as_str()
                             .ok_or("No owner signature")?,
-                    )?;
-                    let existing = crate::identity::friends()?;
-                    require(
-                        existing
-                            .values()
-                            .filter(|friend| friend.last_mac == local.room.bssid)
-                            .all(|friend| {
-                                friend.identity.device_id == owner.device_id
-                                    && friend.identity.public_key == owner.public_key
-                            }),
-                        "The remembered room owner changed identity; forget and re-pair explicitly",
                     )?;
                     let sent = monotonic();
                     let ephemeral = crate::handshake::Ephemeral::new()?;
@@ -972,8 +1075,7 @@ pub fn recover(id: &str, reason: &str) -> Result<Value> {
     )?;
     let _lock = lock()?;
     let mut local = state()?;
-    if local.id != id || local.phase == "closed" || reason == "startup" && local.phase == "playing"
-    {
+    if local.id != id || local.phase == "closed" || reason == "startup" && local.established() {
         return status(None);
     }
     require(
@@ -1034,14 +1136,18 @@ pub fn recover(id: &str, reason: &str) -> Result<Value> {
     if reason != "worker_exit" {
         best(&["systemctl", "stop", &format!("{}.service", local.unit())]);
     }
-    attempt("arcade load check", crate::arcade::stop(&local));
-    if local.role == "client" && local.claim.is_some() {
-        let _ = crate::http::request(
-            "/unready",
-            Some(&json!({"session_id":local.game_session,"claim_id":local.claim})),
-        );
+    if local.purpose == SessionPurpose::Game {
+        attempt("arcade load check", crate::arcade::stop(&local));
+        if local.role == "client" && local.claim.is_some() {
+            let _ = crate::http::request(
+                "/unready",
+                Some(&json!({"session_id":local.game_session,"claim_id":local.claim})),
+            );
+        }
+        attempt("game and display", crate::game::recover(&local));
+    } else {
+        crate::network::leave(&local);
     }
-    attempt("game and display", crate::game::recover(&local));
     attempt("wireless", crate::radio::restore(&local));
     local.stage = "正在恢复当前网络...".into();
     save(&local)?;
@@ -1084,8 +1190,10 @@ pub fn recover(id: &str, reason: &str) -> Result<Value> {
     if !restored {
         errors.push("Original network is not restored".into());
     }
-    if let Err(error) = crate::game::restore_menu(&local) {
-        errors.push(format!("menu restoration: {error}"));
+    if local.purpose == SessionPurpose::Game {
+        if let Err(error) = crate::game::restore_menu(&local) {
+            errors.push(format!("menu restoration: {error}"));
+        }
     }
     local.network_restored = restored && errors.is_empty();
     local.recovery_errors = errors;

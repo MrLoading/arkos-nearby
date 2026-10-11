@@ -17,7 +17,7 @@ use crate::system::{monotonic, read, wall_time, write};
 use crate::{Result, require};
 
 type Packet = (String, Vec<(String, String)>, Vec<u8>);
-fn packet(stream: &mut TcpStream) -> Result<Packet> {
+pub(crate) fn packet(stream: &mut TcpStream) -> Result<Packet> {
     let mut header = Vec::new();
     while !header.ends_with(b"\r\n\r\n") {
         let mut byte = [0];
@@ -65,6 +65,10 @@ pub fn request(route: &str, payload: Option<&Value>) -> Result<Vec<u8>> {
                 | "/room-status"
                 | "/health"
                 | "/identity-challenge"
+                | "/network/room"
+                | "/network/challenge"
+                | "/network/connect"
+                | "/network/heartbeat"
         ),
         "Unknown local control route",
     )?;
@@ -97,6 +101,9 @@ pub fn serve(id: &str) -> Result<()> {
         state.role == "host",
         "Only the selected room host may serve",
     )?;
+    if state.purpose == crate::purpose::SessionPurpose::NetworkOnly {
+        return crate::network::serve(&state);
+    }
     let root = state.root();
     let room = Room::decode(&fs::read(root.join("game/room.json"))?)?;
     let context: Context = read(&root.join("context.json"))?;
@@ -253,34 +260,16 @@ pub fn serve(id: &str) -> Result<()> {
                                     &value.encryption_nonce,
                                     &value.encrypted_credential,
                                 )?;
-                                require(
-                                    value.identity.device_id != owner.public.device_id,
-                                    "Another handheld has a cloned identity; explicitly reset it",
+                                let approved = crate::identity::approve_peer(
+                                    id,
+                                    &owner.public,
+                                    &value.identity,
+                                    observed.mac(),
+                                    wireless_key,
                                 )?;
-                                let approved = crate::identity::known(&value.identity)?
-                                    || current(id)?.approved_mac.as_deref() == Some(observed.mac());
                                 if !approved {
-                                    crate::system::write(
-                                        &root.join("pending-device.json"),
-                                        &value.identity,
-                                    )?;
-                                    crate::session::update(id, |state| {
-                                        state.pending_pair_mac = Some(observed.mac().into());
-                                        state.pending_pair_kind =
-                                            Some(crate::session::PairingRequest::Identity);
-                                        state.stage = "好友加入，按 A 确认。".into();
-                                    })?;
                                     json!({"session_id":state.id,"claim_id":value.claim_id,"approved":false,"compatible":false})
                                 } else {
-                                    let known = crate::identity::known(&value.identity)?;
-                                    {
-                                        let _ = known;
-                                        crate::identity::remember(
-                                            value.identity,
-                                            observed.mac().into(),
-                                            Some(wireless_key),
-                                        )?;
-                                    }
                                     let payload = json!({"session_id":value.session_id,"claim_id":value.claim_id,"game":value.game});
                                     controller.accept(
                                         &serde_json::to_vec(&payload)?,

@@ -94,26 +94,46 @@ pub fn run_manual() -> Result<i32> {
     session::identity(false)?;
     if let Ok(state) = session::state() {
         if !state.closed() || !state.network_restored || !state.recovery_errors.is_empty() {
-            let context: Context = read(&state.root().join("context.json"))?;
-            run_with_fallback(
-                Some(context.clone()),
-                Some(NativeBackend::shared(context)),
-                false,
-            )?;
+            if state.purpose == crate::purpose::SessionPurpose::NetworkOnly {
+                if crate::menu::run_network()? {
+                    return Ok(0);
+                }
+            } else {
+                let context: Context = read(&state.root().join("context.json"))?;
+                run_with_fallback(
+                    Some(context.clone()),
+                    Some(NativeBackend::shared(context)),
+                    false,
+                )?;
+            }
             if session::state().is_ok_and(|state| !state.closed() || !state.network_restored) {
                 return Ok(0);
             }
         }
     }
-    let mut browser = crate::catalog::Browser::new()?;
-    while let Some(context) = crate::menu::choose_game(&mut browser)? {
-        run_with_fallback(
-            Some(context.clone()),
-            Some(NativeBackend::shared(context)),
-            false,
-        )?;
-        if session::state().is_ok_and(|state| !state.closed() || !state.network_restored) {
-            return Ok(0);
+    while let Some(mode) = crate::menu::choose_mode()? {
+        match mode {
+            crate::flow::FlowExit::NetworkOnly => {
+                if crate::menu::run_network()? {
+                    return Ok(0);
+                }
+            }
+            crate::flow::FlowExit::SelectGame => {
+                let mut browser = crate::catalog::Browser::new()?;
+                while let Some(context) = crate::menu::choose_game(&mut browser)? {
+                    run_with_fallback(
+                        Some(context.clone()),
+                        Some(NativeBackend::shared(context)),
+                        false,
+                    )?;
+                    if session::state()
+                        .is_ok_and(|state| !state.closed() || !state.network_restored)
+                    {
+                        return Ok(0);
+                    }
+                }
+            }
+            crate::flow::FlowExit::KeepNetwork => return Err("Invalid entry selection".into()),
         }
     }
     Ok(0)

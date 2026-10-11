@@ -2,7 +2,7 @@
 
 ## 下载与校验
 
-两台掌机安装同一个版本。下载 [arkos-nearby-0.3.2-arm64.tar.gz](https://github.com/W-Mai/arkos-nearby/releases/download/v0.3.2/arkos-nearby-0.3.2-arm64.tar.gz) 和 [SHA256SUMS](https://github.com/W-Mai/arkos-nearby/releases/download/v0.3.2/SHA256SUMS)。在下载目录执行 `sha256sum --ignore-missing -c SHA256SUMS`；macOS 可使用 `shasum -a 256 -c SHA256SUMS` 并只核对实际下载的文件。
+两台掌机安装同一个版本。下载 [arkos-nearby-0.4.0-arm64.tar.gz](https://github.com/W-Mai/arkos-nearby/releases/download/v0.4.0/arkos-nearby-0.4.0-arm64.tar.gz) 和 [SHA256SUMS](https://github.com/W-Mai/arkos-nearby/releases/download/v0.4.0/SHA256SUMS)。在下载目录执行 `sha256sum --ignore-missing -c SHA256SUMS`；macOS 可使用 `shasum -a 256 -c SHA256SUMS` 并只核对实际下载的文件。
 
 解压后包含 `arkos-nearby`、`Install Nearby Multiplayer.sh`、安装说明、许可证和可执行文件校验值。
 
@@ -10,7 +10,13 @@
 
 将解压出的 `arkos-nearby` 文件夹复制到游戏卡的 `ports` 目录。在掌机的 Ports 中打开 `Install Nearby Multiplayer.sh`。程序与脚本必须放在同一目录。安装器检查实际内核、无线芯片、屏幕、系统工具和启动脚本结构，通过后安装应用并添加手动入口。
 
-安装完成后，Options 中的 Nearby Multiplayer 打开图形游戏选择器。也可以在游戏开始加载前按住 X，进入当前游戏的联机界面。
+安装完成后，Options 中的 Nearby Multiplayer 提供「仅组网」和「选择游戏」两个入口。也可以在游戏开始加载前按住 X，进入当前游戏的联机界面。
+
+## 仅组网
+
+选择「仅组网」后，一台创建房间，另一台选择该房间加入。连接完成后显示双方地址，按 A「保持连接，返回系统」可继续从 Ports 打开局域网游戏，并在游戏内创建或加入房间。
+
+再次打开 Nearby Multiplayer 可查看连接，按 B「断开并恢复 Wi-Fi」结束组网。连接意外中断超过 15 秒时，程序恢复原 Wi-Fi。
 
 ## 通过 SSH 安装
 
@@ -50,4 +56,4 @@ sudo /opt/arkos-nearby/arkos-nearby uninstall
 
 运行程序、图形界面、核心查询器、无线资产、许可证与诊断日志位于 `/opt/arkos-nearby/`。Options 入口为 `/opt/system/Nearby Multiplayer.sh`。安装器修改已识别的 `/usr/local/bin/retroarch` 和 `retroarch32` 启动脚本中的 X 分支，原始字节保存在 `original-launch/`。
 
-创建或加入房间时加载联机驱动，退出后恢复原驱动和之前连接的 Wi-Fi。临时会话文件位于 `/run/arkos-nearby-rust/`，诊断日志保存在 `/opt/arkos-nearby/logs/`。
+创建或加入房间时加载联机驱动，结束联机后恢复原驱动和之前连接的 Wi-Fi。仅组网完成后选择「保持连接，返回系统」会保留网络。临时会话文件位于 `/run/arkos-nearby-rust/`，诊断日志保存在 `/opt/arkos-nearby/logs/`。

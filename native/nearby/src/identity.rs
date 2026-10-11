@@ -192,6 +192,52 @@ pub fn known(peer: &PublicIdentity) -> Result<bool> {
         .get(&peer.device_id)
         .is_some_and(|friend| friend.identity.public_key == peer.public_key))
 }
+
+pub fn check_owner(local: &PublicIdentity, owner: &PublicIdentity, mac: &str) -> Result<()> {
+    owner.validate()?;
+    require(
+        owner.device_id != local.device_id,
+        "Another handheld has a cloned identity; reset the cloned device",
+    )?;
+    require(
+        friends()?
+            .values()
+            .filter(|friend| friend.last_mac == mac)
+            .all(|friend| {
+                friend.identity.device_id == owner.device_id
+                    && friend.identity.public_key == owner.public_key
+            }),
+        "The remembered room owner changed identity; forget and re-pair explicitly",
+    )
+}
+
+pub fn approve_peer(
+    id: &str,
+    owner: &PublicIdentity,
+    peer: &PublicIdentity,
+    mac: &str,
+    key: String,
+) -> Result<bool> {
+    peer.validate()?;
+    require(
+        peer.device_id != owner.device_id,
+        "Another handheld has a cloned identity; explicitly reset it",
+    )?;
+    let state = crate::session::current(id)?;
+    let approved = known(peer)? || state.approved_mac.as_deref() == Some(mac);
+    if !approved {
+        write(&state.root().join("pending-device.json"), peer)?;
+        crate::session::update(id, |state| {
+            state.pending_pair_mac = Some(mac.into());
+            state.pending_pair_kind = Some(crate::session::PairingRequest::Identity);
+            state.stage = "好友加入，按 A 确认。".into();
+        })?;
+    } else {
+        remember(peer.clone(), mac.into(), Some(key))?;
+    }
+    Ok(approved)
+}
+
 pub fn remember(peer: PublicIdentity, mac: String, key: Option<String>) -> Result<()> {
     peer.validate()?;
     require(
@@ -199,6 +245,14 @@ pub fn remember(peer: PublicIdentity, mac: String, key: Option<String>) -> Resul
         "Another device has the same identity; reset the cloned device",
     )?;
     let mut saved = friends()?;
+    if saved.get(&peer.device_id).is_some_and(|friend| {
+        friend.last_mac == mac
+            && friend.wireless_key == key
+            && friend.identity.public_key == peer.public_key
+            && friend.identity.name == peer.name
+    }) {
+        return Ok(());
+    }
     require(
         saved.contains_key(&peer.device_id) || saved.len() < 128,
         "Remembered device limit reached",

@@ -13,7 +13,8 @@ use std::time::Duration;
 use serde_json::{Value, json};
 
 use crate::context::{Context, INSTALL};
-use crate::flow::{Flow, Page, Request};
+use crate::flow::{Flow, FlowExit, Page, Request};
+use crate::purpose::SessionPurpose;
 use crate::system::{mkdir, monotonic, private_write, random_id, wall_time, write};
 use crate::{Result, require};
 
@@ -33,6 +34,7 @@ enum Event {
 }
 
 enum Outcome {
+    Mode(FlowExit),
     Exit(i32),
     Selected(Box<Context>),
 }
@@ -97,16 +99,57 @@ pub fn run_with_fallback(
     backend: Option<Arc<dyn Backend>>,
     single_player: bool,
 ) -> Result<i32> {
-    match run_screen(context, backend, single_player, None)? {
+    match run_screen(
+        context,
+        backend,
+        single_player,
+        None,
+        SessionPurpose::Game,
+        false,
+    )? {
         Outcome::Exit(code) => Ok(code),
+        Outcome::Mode(_) => Err("Game flow returned a mode selection".into()),
         Outcome::Selected(_) => Err("Room flow returned a game selection".into()),
     }
 }
 
 pub fn choose_game(browser: &mut crate::catalog::Browser) -> Result<Option<Context>> {
-    match run_screen(None, None, false, Some(browser))? {
+    match run_screen(
+        None,
+        None,
+        false,
+        Some(browser),
+        SessionPurpose::Game,
+        false,
+    )? {
         Outcome::Selected(context) => Ok(Some(*context)),
         Outcome::Exit(_) => Ok(None),
+        Outcome::Mode(_) => Err("Browser returned a mode selection".into()),
+    }
+}
+
+pub fn choose_mode() -> Result<Option<FlowExit>> {
+    match run_screen(None, None, false, None, SessionPurpose::NetworkOnly, true)? {
+        Outcome::Mode(mode) => Ok(Some(mode)),
+        Outcome::Exit(_) => Ok(None),
+        _ => Err("Invalid mode result".into()),
+    }
+}
+
+pub fn run_network() -> Result<bool> {
+    match run_screen(
+        None,
+        Some(crate::session::NativeBackend::for_intent(
+            crate::purpose::SessionIntent::NetworkOnly,
+        )),
+        false,
+        None,
+        SessionPurpose::NetworkOnly,
+        false,
+    )? {
+        Outcome::Mode(FlowExit::KeepNetwork) => Ok(true),
+        Outcome::Exit(_) => Ok(false),
+        _ => Err("Invalid network result".into()),
     }
 }
 
@@ -115,6 +158,8 @@ fn run_screen(
     backend: Option<Arc<dyn Backend>>,
     single_player: bool,
     mut browser: Option<&mut crate::catalog::Browser>,
+    purpose: SessionPurpose,
+    mode_picker: bool,
 ) -> Result<Outcome> {
     let root = Path::new("/run/arkos-nearby-rust/ui");
     mkdir(root)?;
@@ -198,7 +243,13 @@ fn run_screen(
     }
     let mut preparing = None;
     let result = (|| -> Result<Outcome> {
-        let mut flow = Flow::new(context);
+        let mut flow = if mode_picker {
+            Flow::modes()
+        } else if purpose == SessionPurpose::NetworkOnly {
+            Flow::network()
+        } else {
+            Flow::new(context)
+        };
         if !single_player {
             flow.manual();
         }
@@ -356,7 +407,10 @@ fn run_screen(
         log(
             json!({"phase":"finished","exit_code":flow.exit_code.unwrap_or(0),"last_view":previous}),
         )?;
-        Ok(Outcome::Exit(flow.exit_code.unwrap_or(0)))
+        Ok(match flow.outcome {
+            Some(mode) => Outcome::Mode(mode),
+            None => Outcome::Exit(flow.exit_code.unwrap_or(0)),
+        })
     })();
     if let Some(worker) = preparing {
         let _ = worker.join();

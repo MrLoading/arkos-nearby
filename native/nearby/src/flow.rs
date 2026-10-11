@@ -8,6 +8,7 @@ use crate::system::monotonic;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Page {
+    Mode,
     Choice,
     Host,
     Rooms,
@@ -18,6 +19,7 @@ pub enum Page {
 impl Page {
     pub fn name(self) -> &'static str {
         match self {
+            Self::Mode => "mode",
             Self::Choice => "choice",
             Self::Host => "host",
             Self::Rooms => "rooms",
@@ -30,6 +32,7 @@ impl Page {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Operation {
+    Detach,
     Create,
     Join,
     Start,
@@ -39,6 +42,7 @@ pub enum Operation {
 impl Operation {
     pub fn name(self) -> &'static str {
         match self {
+            Self::Detach => "detach",
             Self::Create => "create",
             Self::Join => "join",
             Self::Start => "start",
@@ -60,7 +64,16 @@ struct Record {
     available: bool,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FlowExit {
+    NetworkOnly,
+    SelectGame,
+    KeepNetwork,
+}
+
 pub struct Flow {
+    pub outcome: Option<FlowExit>,
+    network_only: bool,
     pub context: Option<Context>,
     pub page: Page,
     pub generation: u64,
@@ -126,6 +139,8 @@ impl Flow {
         };
         let unavailable = "暂时无法核对当前游戏，按 B 继续单机。";
         Self {
+            outcome: None,
+            network_only: false,
             context,
             page,
             generation: 0,
@@ -156,6 +171,20 @@ impl Flow {
             refreshing_until: 0.0,
             single_player: true,
         }
+    }
+    pub fn modes() -> Self {
+        let mut flow = Self::network();
+        flow.page = Page::Mode;
+        flow.message = "请选择仅组网或选择游戏。".into();
+        flow
+    }
+    pub fn network() -> Self {
+        let mut flow = Self::new(None);
+        flow.network_only = true;
+        flow.single_player = false;
+        flow.page = Page::Choice;
+        flow.message = "建立局域网连接，供游戏或应用使用。".into();
+        flow
     }
     pub fn manual(&mut self) {
         self.single_player = false;
@@ -196,7 +225,7 @@ impl Flow {
         self.operation = Some(operation);
         if matches!(
             operation,
-            Operation::Start | Operation::Cancel | Operation::Approve
+            Operation::Start | Operation::Cancel | Operation::Approve | Operation::Detach
         ) {
             payload = json!({"session_id": self.session_id});
         }
@@ -207,6 +236,7 @@ impl Flow {
             self.peer_left = false;
         }
         self.phase = match operation {
+            Operation::Detach => "network_connected",
             Operation::Create => "creating",
             Operation::Join => "connecting",
             Operation::Start => "starting",
@@ -220,6 +250,7 @@ impl Flow {
             Operation::Start => "正在开始游戏...",
             Operation::Cancel => "正在结束本次联机并恢复原网络...",
             Operation::Approve => "正在连接好友...",
+            Operation::Detach => "保持网络连接，正在返回系统...",
         }
         .into();
         self.request = Some(Request {
@@ -268,7 +299,7 @@ impl Flow {
             return;
         }
         let destination = match self.page {
-            Page::Choice => None,
+            Page::Choice | Page::Mode => None,
             Page::Joined => Some(Page::Rooms),
             _ => Some(Page::Choice),
         };
@@ -322,7 +353,7 @@ impl Flow {
             _ => return,
         };
         if direction != 0 {
-            if self.page == Page::Choice {
+            if matches!(self.page, Page::Choice | Page::Mode) {
                 self.choice = (self.choice as i32 + direction).clamp(0, 1) as usize;
             } else if self.page == Page::Rooms && !self.rooms.is_empty() {
                 let ids = self.order();
@@ -347,6 +378,21 @@ impl Flow {
             return;
         }
         match self.page {
+            Page::Mode => {
+                self.outcome = Some(if self.choice == 0 {
+                    FlowExit::NetworkOnly
+                } else {
+                    FlowExit::SelectGame
+                });
+                self.exit_code = Some(0);
+            }
+            Page::Host | Page::Joined
+                if self.network_only
+                    && self.phase == "network_connected"
+                    && truth(&self.state, "connected") =>
+            {
+                self.begin(Operation::Detach, json!({}));
+            }
             Page::Choice if self.choice == 0 => {
                 self.set_page(Page::Host);
                 self.begin(Operation::Create, json!({}));
@@ -590,10 +636,14 @@ impl Flow {
             self.join_authorized = false;
             self.message = match request.operation {
                 Operation::Create => "创建失败，请稍后再试。",
+                Operation::Join if self.network_only => "加入失败，请确认房间仍在等待连接。",
                 Operation::Join => "加入失败，请确认双方游戏一致后重试。",
                 _ => "暂时无法开始，请等待对方准备好后重试。",
             }
             .into();
+        } else if request.operation == Operation::Detach {
+            self.outcome = Some(FlowExit::KeepNetwork);
+            self.exit_code = Some(0);
         } else if request.operation == Operation::Start {
             self.exit_code = Some(0);
         } else {
@@ -603,11 +653,11 @@ impl Flow {
     pub fn view(&self) -> Value {
         let ids = self.order();
         let rows: Vec<_> = if self.page == Page::Rooms {
-            ids.iter().map(|id| { let record = &self.rooms[id]; json!({"name":room_name(&record.room),"detail":if truth(&record.room,"same_game_hint") { "同一游戏，可以加入" } else { "其他游戏的房间" },"signal":record.room["signal"].as_i64().unwrap_or(0).clamp(0,100),"available":record.available}) }).collect()
+            ids.iter().map(|id| { let record = &self.rooms[id]; json!({"name":room_name(&record.room),"detail":if self.network_only { "仅组网房间" } else if truth(&record.room,"same_game_hint") { "同一游戏，可以加入" } else { "其他游戏的房间" },"signal":record.room["signal"].as_i64().unwrap_or(0).clamp(0,100),"available":record.available}) }).collect()
         } else {
             vec![]
         };
-        let selected = if self.page == Page::Choice {
+        let selected = if matches!(self.page, Page::Choice | Page::Mode) {
             self.choice
         } else {
             ids.iter()
@@ -619,7 +669,11 @@ impl Flow {
         } else {
             &self.state["room"]
         };
-        let back = if self.phase == "room_active" {
+        let back = if self.network_only && self.phase == "network_connected" {
+            "断开并恢复 Wi-Fi"
+        } else if self.page == Page::Mode || self.network_only && self.page == Page::Choice {
+            "返回"
+        } else if self.phase == "room_active" {
             "关闭房间"
         } else if self.phase == "restore_failed" {
             "重试退出"
@@ -642,6 +696,6 @@ impl Flow {
         } else {
             "取消加入"
         };
-        json!({"page":self.page.name(),"title":self.context.as_ref().map(|c|label(&c.title)).unwrap_or_else(||"当前游戏".into()),"core":self.context.as_ref().map(|c|format!("{} {}",c.identity.core.name,c.identity.core.version)).unwrap_or_default(),"selected":selected,"rooms":rows,"room_name":if room.is_null() { String::new() } else { room_name(room) },"ready":truth(&self.state,"ready") && self.state["context_matches"] != false && self.pending_back.is_none() && matches!(self.phase.as_str(),"host_ready"|"waiting_start"|"starting"),"busy":self.operation.is_some(),"refreshing":self.page == Page::Rooms && self.scanning.unwrap_or(monotonic()<self.refreshing_until),"status":label(&self.message),"phase":self.phase,"back_label":back})
+        json!({"network_only":self.network_only,"local_address":self.state["local_address"].as_str().unwrap_or(""),"peers":self.state["peers"].as_array().cloned().unwrap_or_default(),"connected":truth(&self.state,"connected"),"page":self.page.name(),"title":self.context.as_ref().map(|c|label(&c.title)).unwrap_or_else(||if self.network_only { "仅组网".into() } else { "当前游戏".into() }),"core":self.context.as_ref().map(|c|format!("{} {}",c.identity.core.name,c.identity.core.version)).unwrap_or_default(),"selected":selected,"rooms":rows,"room_name":if room.is_null() { String::new() } else { room_name(room) },"ready":truth(&self.state,"ready") && self.state["context_matches"] != false && self.pending_back.is_none() && matches!(self.phase.as_str(),"host_ready"|"waiting_start"|"starting"),"busy":self.operation.is_some(),"refreshing":self.page == Page::Rooms && self.scanning.unwrap_or(monotonic()<self.refreshing_until),"status":label(&self.message),"phase":self.phase,"back_label":back})
     }
 }

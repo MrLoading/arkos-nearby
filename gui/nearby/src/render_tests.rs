@@ -79,6 +79,7 @@ fn assert_full_frame_matches(app: &mut TestApp, context: &str) {
 #[test]
 fn dynamic_updates_preserve_static_caches_and_one_model_registration() {
     for page in [
+        Page::Mode,
         Page::Choice,
         Page::Rooms,
         Page::Games,
@@ -152,6 +153,7 @@ fn text_fields_invalidate_their_own_bindings_and_old_page_bindings_are_released(
 fn responsive_layout_keeps_focus_and_text_sections_inside_the_viewport() {
     for size in [[480, 320], [640, 480], [800, 480]] {
         for page in [
+            Page::Mode,
             Page::Choice,
             Page::Rooms,
             Page::Games,
@@ -196,6 +198,34 @@ fn responsive_layout_keeps_focus_and_text_sections_inside_the_viewport() {
                     x >= 0 && y >= 0 && x + w <= i32::from(size[0]) && y + h <= footer.y.to_int()
                 );
             }
+        }
+    }
+}
+
+#[test]
+fn network_status_keeps_connection_actions_inside_the_viewport() {
+    for size in [[480, 320], [640, 480], [800, 480]] {
+        for page in [Page::Host, Page::Joined] {
+            let mut app = app(size);
+            let mut view = view(page);
+            view.network_only = true;
+            view.connected = true;
+            view.phase = Phase::NetworkConnected;
+            view.local_address = "192.168.49.123".into();
+            view.back_label = "断开并恢复 Wi-Fi".into();
+            view.peers = (0..3)
+                .map(|index| crate::model::NetworkPeer {
+                    name: format!("好友 {index} / Handheld"),
+                    address: format!("192.168.49.{}", index + 2),
+                })
+                .collect();
+            let scene = draw(&mut app, &view).unwrap();
+            let footer = rect(&app, "nearby_footer");
+            let [x, y, w, h] = scene.focus_rect.unwrap();
+            assert!(x >= 0 && y >= 0 && w > 40 && h >= 26);
+            assert!(x + w <= i32::from(size[0]) && y + h <= footer.y.to_int());
+            assert!(footer.y + footer.h <= Fixed::from_int(i32::from(size[1])));
+            assert_eq!(confirm_text(&view), "返回系统");
         }
     }
 }

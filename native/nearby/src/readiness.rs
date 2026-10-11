@@ -14,6 +14,9 @@ pub struct ObservedPeer {
 }
 
 impl ObservedPeer {
+    pub fn ipv4(&self) -> &str {
+        &self.ipv4
+    }
     pub fn mac(&self) -> &str {
         &self.mac
     }

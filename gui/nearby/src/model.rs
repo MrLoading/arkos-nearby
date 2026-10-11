@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Page {
+    Mode,
     #[default]
     Choice,
     Host,
@@ -33,6 +34,10 @@ pub enum Phase {
     Failed,
     RestoreFailed,
     RoomActive,
+    NetworkConfirming,
+    NetworkConnected,
+    NetworkReconnecting,
+    ApprovalPendingClient,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
@@ -47,6 +52,14 @@ pub struct RoomRow {
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct View {
+    #[serde(default)]
+    pub network_only: bool,
+    #[serde(default)]
+    pub connected: bool,
+    #[serde(default)]
+    pub local_address: String,
+    #[serde(default)]
+    pub peers: Vec<NetworkPeer>,
     pub page: Page,
     pub title: String,
     pub core: String,
@@ -64,6 +77,13 @@ pub struct View {
     pub back_label: String,
     #[serde(default)]
     pub entries: Vec<GameRow>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NetworkPeer {
+    pub name: String,
+    pub address: String,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]

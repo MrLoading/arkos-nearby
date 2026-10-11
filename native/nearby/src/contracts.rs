@@ -80,6 +80,71 @@ fn unsupported_handheld_link_cannot_offer_create_or_join_actions() {
 }
 
 #[test]
+fn network_completion_can_detach_but_cannot_offer_game_start() {
+    use crate::flow::{Flow, FlowExit, Operation, Page};
+    for role in ["host", "client"] {
+        let mut flow = Flow::network();
+        let id = "a".repeat(32);
+        flow.status(0, serde_json::json!({"id":id,"purpose":"network_only","phase":"network_connected","role":role,"step":"network_connected","context_matches":true,"connected":true,"ready":false,"peer_present":true}));
+        assert_eq!(flow.view()["ready"], false);
+        assert!(matches!(flow.page, Page::Host | Page::Joined));
+        flow.dispatch("confirm", crate::system::monotonic() + 1.0);
+        let detach = flow.request.take().unwrap();
+        assert_eq!(detach.operation, Operation::Detach);
+        assert_eq!(detach.payload["session_id"], id);
+        flow.complete(
+            &detach,
+            serde_json::json!({"id":id,"connected":true}),
+            false,
+        );
+        assert_eq!(flow.outcome, Some(FlowExit::KeepNetwork));
+        assert!(flow.request.is_none());
+    }
+}
+
+#[test]
+fn network_confirmation_and_cancel_are_bound_to_current_session() {
+    use crate::flow::{Flow, Operation};
+    let mut flow = Flow::network();
+    let id = "a".repeat(32);
+    flow.status(0, serde_json::json!({"id":id,"role":"host","phase":"hosting","step":"approval_pending","context_matches":true,"connected":false}));
+    flow.dispatch("confirm", crate::system::monotonic() + 1.0);
+    let approval = flow.request.take().unwrap();
+    assert_eq!(approval.operation, Operation::Approve);
+    flow.dispatch("back", crate::system::monotonic() + 1.0);
+    flow.dispatch("back", crate::system::monotonic() + 1.0);
+    flow.complete(
+        &approval,
+        serde_json::json!({"id":id,"phase":"hosting"}),
+        false,
+    );
+    let cancel = flow.request.take().unwrap();
+    assert_eq!(cancel.operation, Operation::Cancel);
+    assert_eq!(cancel.payload["session_id"], id);
+    assert!(flow.outcome.is_none());
+}
+
+#[test]
+fn network_advertisements_do_not_claim_game_compatibility() {
+    use crate::purpose::SessionPurpose;
+    use crate::session::RoomEntry;
+    let network =
+        RoomEntry::observed("DIRECT-NW-1111111111111", "0c:c6:55:5d:8e:98", 80, "000000").unwrap();
+    assert_eq!(network.purpose(), SessionPurpose::NetworkOnly);
+    assert!(!network.same_game_hint);
+    let game = RoomEntry::observed(
+        "DIRECT-NP-aaaaaa-1111111111111",
+        "0c:c6:55:5d:8e:98",
+        80,
+        "aaaaaa",
+    )
+    .unwrap();
+    assert_eq!(game.purpose(), SessionPurpose::Game);
+    assert!(game.same_game_hint);
+    assert!(RoomEntry::observed("DIRECT-NW-invalid", "0c:c6:55:5d:8e:98", 80, "").is_none());
+}
+
+#[test]
 fn navigation_merges_exit_and_binds_cleanup_to_the_completed_session() {
     use crate::flow::{Flow, Operation, Page};
     let mut flow = Flow::new(Some(context()));
@@ -322,6 +387,10 @@ fn renderer_contract_contains_display_fields_without_launch_authority() {
         "status",
         "phase",
         "back_label",
+        "network_only",
+        "connected",
+        "local_address",
+        "peers",
     ]
     .into_iter()
     .collect();
