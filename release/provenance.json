@@ -14,7 +14,7 @@
     "gui/nearby/src/model.rs": "0762ffc7b6140b60c50b64c5f36aa36149878e0a4291a294d3b84a1962c9c438",
     "gui/nearby/src/platform.rs": "8e19a45e0d0e68d68dc2963d4754e9587880cfadad9966f907a37805a068f31d",
     "gui/nearby/src/render.rs": "30dd94e5d5b790ce0b8273954c9ac0d9da836e0b34a74c06b437c21bd33f955a",
-    "gui/nearby/src/render_tests.rs": "18eb62cfd8aedd7f09afc515a442c510d5face8bef6ab2c8d78414a0bd43c0ca",
+    "gui/nearby/src/render_tests.rs": "e81c66a2f2d137469ad05d44ca84d9bf479bb343682046c0bc87508de394c0ee",
     "native/core_inspect/core_inspect.c": "83823e9950db0ece5c44a675f0086954308c0abb8bb4926196354eb376fd9afd",
     "native/core_inspect/runtime-pins.json": "bc7676e9a8513accb320dfcc966352d7df6e3715514b33f95a20572d4eadfc84",
     "native/core_inspect/start32.S": "9fa1116e49ce9e16c680a9258ff311620c6009fda3f047514e5790fe1d6bf277",
@@ -42,8 +42,8 @@
     "native/nearby/src/installer.rs": "a4c39ea0eab2b91eb60c57083ac66505add08baa5e657e96c320195e8eb270ae",
     "native/nearby/src/lib.rs": "f9195447676fa34fc34b75282cc405d332ef087e77dcdd0af40ebd15db4b9a6d",
     "native/nearby/src/main.rs": "a2c6c28d150f2e3291e60e197736db513d0994da1e05d2fe096e46e5d5d48576",
-    "native/nearby/src/manual.rs": "b234eaef98d23a87982bf5b5e58b8d4be4385fb3a0a6314bb2276a6dd5a58309",
-    "native/nearby/src/menu.rs": "dc914d78bd5219466b8562788166f19f5be80f7d88c0ea63554cd6344835bedd",
+    "native/nearby/src/manual.rs": "77ec31226dd86e8beb930603d3aaf8db3084972ff806608d32f340ce059ebeae",
+    "native/nearby/src/menu.rs": "220132d1b2b08d5df5a081ba117f6b856ec5a651111104a0096d40af7322fdd1",
     "native/nearby/src/netplay_compression.rs": "fc023a5c52ec93f310996e36d64d03d7d7bae888b51f0278492c165a71be6bed",
     "native/nearby/src/network.rs": "425a6e31577633238dbbee4418ae645438e10ce9398883d82722884001aa0628",
     "native/nearby/src/owned_core.rs": "624b813c7adb61fa5d0c7d0ec8f18c789046da2075520583109ee505ab98ce4b",
@@ -75,7 +75,8 @@
     "gui/nearby/src/render/sessions.rs": "ab9cc6eefde57f61b42c34bfbf560d65dacd32be9a19137e800a20bfec355857",
     "gui/nearby/src/render/state.rs": "108ee02f8ff1e8753555cba364fa4a6ce84565fad265c0504adec859ca22a744",
     "gui/nearby/src/render/style.rs": "917547b6da5302b8d9569a1e8b13612d51bee8da9812128c98086e599622a954",
-    "gui/nearby/src/render/widgets.rs": "93d967b3f25306c5420198c23d29f2d659d2313f1c67d5eaba8d51a21dc47eee"
+    "gui/nearby/src/render/widgets.rs": "93d967b3f25306c5420198c23d29f2d659d2313f1c67d5eaba8d51a21dc47eee",
+    "native/nearby/src/menu/display.rs": "e163e4ea089cd221ee5e16169540cae172cdb8002c7ead106a516372cafb35cf"
   },
   "source_adjustments": {
     "native/nearby/Cargo.toml": {
@@ -128,7 +129,7 @@
     },
     "gui/nearby/src/render_tests.rs": {
       "development_sha256": "d7373195e79b0973df392152d0bbce722e0b66df6ec7245e9318d0c9fa3f9063",
-      "change": "Registry renderer and declarative page lifecycle"
+      "change": "Page lifecycle, panel-format transitions and incremental drawing checks"
     },
     "native/nearby/src/bundle.rs": {
       "development_sha256": "e3dc5d6ff309d770a3b0f666279264c86eaf798725970ecf6cdb494265fa0c74",
@@ -177,6 +178,18 @@
     "gui/nearby/src/render/widgets.rs": {
       "development_sha256": null,
       "change": "Registry renderer and declarative page lifecycle"
+    },
+    "native/nearby/src/manual.rs": {
+      "development_sha256": "b234eaef98d23a87982bf5b5e58b8d4be4385fb3a0a6314bb2276a6dd5a58309",
+      "change": "Shared graphical menu session and screen-scoped replies"
+    },
+    "native/nearby/src/menu.rs": {
+      "development_sha256": "dc914d78bd5219466b8562788166f19f5be80f7d88c0ea63554cd6344835bedd",
+      "change": "Shared graphical menu session and screen-scoped replies"
+    },
+    "native/nearby/src/menu/display.rs": {
+      "development_sha256": null,
+      "change": "Shared graphical menu session and screen-scoped replies"
     }
   },
   "device_validation": {

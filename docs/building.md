@@ -26,6 +26,8 @@ GUI 通过 `scripts/build_nearby_gui.py` 构建和检查，直接使用 Cargo.lo
 
 `gui/nearby/src/model.rs` 定义显示协议；`render.rs` 负责安装与 Scene 入口。`render/state.rs` 发布显示状态，`copy.rs` 提供状态文案，`style.rs` 和 `font.rs` 管理尺寸、颜色与字体，`widgets.rs` 组合公共控件。`chrome.rs`、`choices.rs`、`lists.rs`、`sessions.rs` 和 `pages.rs` 构成页面，`composition.rs` 挂载 PageView，`selection.rs` 管理页面内焦点。网络、游戏核对和会话清理仍属于 native runtime。
 
+Options 菜单通过一个 `MenuSession` 连接模式选择、游戏列表与房间流程。`native/nearby/src/menu/display.rs` 持有 GUI 进程、手柄映射和消息通道，跨流程只更新显示快照，退出整个界面时释放进程。后台回复按屏幕会话隔离，输入保留接收时间检查；网络保留与恢复仍由原会话流程决定。游戏内入口使用独立的菜单会话。
+
 先执行 `python3 scripts/build_nearby_gui.py build` 生成当前源码对应的 GUI 和来源记录，再执行质量检查。`release/manifest.json` 和 `release/assets.json` 保留已发行安装资产的身份；构建时将当前 GUI 及其来源记录放入新的本地 bundle，不把本地构建等同于已发布的掌机验收版本。
 
 准备发行归档时，先完成构建和校验，再执行 `python3 scripts/package.py --binary dist/arkos-nearby --expected-sha256 VERIFIED_SHA256`。将 `VERIFIED_SHA256` 替换为构建结果的 SHA-256。程序核对摘要与 ARM64 ELF 类型，打包安装脚本、使用说明和许可证。

@@ -4,7 +4,7 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 
 use crate::context::Context;
-use crate::menu::{OwnedChild, run_with_fallback};
+use crate::menu::{MenuSession, OwnedChild};
 use crate::session::{self, NativeBackend};
 use crate::system::{mkdir, private_write, read};
 use crate::{Result, require};
@@ -92,15 +92,16 @@ pub fn install_result(result: &serde_json::Value) -> Result<()> {
 }
 pub fn run_manual() -> Result<i32> {
     session::identity(false)?;
+    let mut menu = MenuSession::open()?;
     if let Ok(state) = session::state() {
         if !state.closed() || !state.network_restored || !state.recovery_errors.is_empty() {
             if state.purpose == crate::purpose::SessionPurpose::NetworkOnly {
-                if crate::menu::run_network()? {
+                if menu.run_network()? {
                     return Ok(0);
                 }
             } else {
                 let context: Context = read(&state.root().join("context.json"))?;
-                run_with_fallback(
+                menu.run_with_fallback(
                     Some(context.clone()),
                     Some(NativeBackend::shared(context)),
                     false,
@@ -111,17 +112,17 @@ pub fn run_manual() -> Result<i32> {
             }
         }
     }
-    while let Some(mode) = crate::menu::choose_mode()? {
+    while let Some(mode) = menu.choose_mode()? {
         match mode {
             crate::flow::FlowExit::NetworkOnly => {
-                if crate::menu::run_network()? {
+                if menu.run_network()? {
                     return Ok(0);
                 }
             }
             crate::flow::FlowExit::SelectGame => {
                 let mut browser = crate::catalog::Browser::new()?;
-                while let Some(context) = crate::menu::choose_game(&mut browser)? {
-                    run_with_fallback(
+                while let Some(context) = menu.choose_game(&mut browser)? {
+                    menu.run_with_fallback(
                         Some(context.clone()),
                         Some(NativeBackend::shared(context)),
                         false,

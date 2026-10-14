@@ -80,7 +80,17 @@ fn offset_focus(app: &mut TestApp, axis: usize) {
 }
 
 fn app(size: [u16; 2]) -> TestApp {
-    let mut app = App::headless(size[0], size[1]);
+    app_with_format(size, ColorFormat::RGBA8888)
+}
+
+fn app_with_format(size: [u16; 2], format: ColorFormat) -> TestApp {
+    let surface = FramebufSurface::with_format(
+        size[0],
+        size[1],
+        format,
+        (|_, _| {}) as fn(&[u8], PhysicalRect),
+    );
+    let mut app = App::new(surface);
     app.with_default_widgets().with_default_systems();
     install(&mut app).unwrap();
     TIME.with(|clock| clock.set(0));
@@ -629,4 +639,58 @@ fn refreshed_room_rows_keep_the_page_and_rebind_selection_to_live_entities() {
     assert!(app.world.is_alive(selected));
     assert_eq!(app.world.get::<FocusTarget>(selected).unwrap().index, 2);
     assert!(old_targets.iter().all(|node| *node != selected));
+}
+
+#[test]
+fn menu_handoffs_animate_without_blank_frames_in_panel_formats() {
+    for format in [ColorFormat::BGRA8888, ColorFormat::RGB565] {
+        let mut app = app_with_format([640, 480], format);
+        let mut scene = draw(&mut app, &view(Page::Mode)).unwrap();
+        let root = app.root;
+        let mut feedback = Feedback::default();
+        for (page, network_only, backward) in [
+            (Page::Games, false, false),
+            (Page::Choice, false, false),
+            (Page::Host, false, false),
+            (Page::Choice, false, true),
+            (Page::Mode, false, true),
+            (Page::Choice, true, false),
+            (Page::Rooms, true, false),
+            (Page::Mode, false, true),
+        ] {
+            let mut next = view(page);
+            next.network_only = network_only;
+            scene.navigation_intent(backward);
+            update(&mut scene, &next).unwrap();
+            let start = now_ns() / 1_000_000;
+            paint_at(&mut app, &mut feedback, &scene, start + 16);
+            assert_eq!(app.root, root);
+            assert_eq!(
+                page_frames(&app).len(),
+                2,
+                "{page:?}: outgoing page must stay mounted"
+            );
+            let offset = translation(&app, body(&app));
+            assert!(if backward {
+                offset < Fixed::ZERO
+            } else {
+                offset > Fixed::ZERO
+            });
+            while now_ns() / 1_000_000 < start + 480 {
+                let time = now_ns() / 1_000_000 + 16;
+                paint_at(&mut app, &mut feedback, &scene, time);
+                for y in (0..480).step_by(16) {
+                    for x in (0..640).step_by(16) {
+                        let color = app.backend.framebuffer().get_pixel(x, y);
+                        assert!(
+                            color.r != 0 || color.g != 0 || color.b != 0,
+                            "{format:?} {page:?}: black pixel at {x},{y}"
+                        );
+                    }
+                }
+                assert_full_frame_matches(&mut app, "continuous menu handoff");
+            }
+            assert_eq!(page_frames(&app).len(), 1);
+        }
+    }
 }

@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- Keep page transitions visible when opening games and network rooms from Options.
 - Animate page entry and return while keeping the current room state.
 - Keep the selection border aligned during room refreshes and connection updates.
 

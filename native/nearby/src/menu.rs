@@ -1,22 +1,17 @@
-use std::fs::{self, File};
-use std::io::{BufRead, BufReader, Read, Write};
-use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
-    mpsc,
-};
+use std::fs;
+use std::path::Path;
+use std::process::Child;
+use std::sync::{Arc, mpsc};
 use std::thread;
 use std::time::Duration;
 
 use serde_json::{Value, json};
 
+use crate::Result;
 use crate::context::{Context, INSTALL};
 use crate::flow::{Flow, FlowExit, Page, Request};
 use crate::purpose::SessionPurpose;
-use crate::system::{mkdir, monotonic, private_write, random_id, wall_time, write};
-use crate::{Result, require};
+use crate::system::{mkdir, monotonic, wall_time, write};
 
 pub trait Backend: Send + Sync + 'static {
     fn call(&self, action: &str, payload: &Value) -> Result<Value>;
@@ -82,348 +77,260 @@ pub fn log(values: Value) -> Result<()> {
     write(&path, &record)
 }
 
-const KEYS: &str = "a = enter\nb = esc\nback = esc\nx = r\nstart = enter\nup = up\ndown = down\nleft = left\nright = right\nl1 = pageup\nr1 = pagedown\nl2 = pageup\nr2 = pagedown\nleft_analog_up = up\nleft_analog_down = down\nleft_analog_left = left\nleft_analog_right = right\nright_analog_up = up\nright_analog_down = down\nright_analog_left = left\nright_analog_right = right\ndeadzone_triggers = 32767\n";
+mod display;
 
-struct Temporary(PathBuf);
-impl Drop for Temporary {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.0);
+pub struct MenuSession {
+    display: display::Display,
+}
+
+impl MenuSession {
+    pub fn open() -> Result<Self> {
+        Ok(Self {
+            display: display::Display::open()?,
+        })
+    }
+    pub fn run_with_fallback(
+        &mut self,
+        context: Option<Context>,
+        backend: Option<Arc<dyn Backend>>,
+        single_player: bool,
+    ) -> Result<i32> {
+        match self.run_screen(
+            context,
+            backend,
+            single_player,
+            None,
+            SessionPurpose::Game,
+            false,
+        )? {
+            Outcome::Exit(code) => Ok(code),
+            Outcome::Mode(_) => Err("Game flow returned a mode selection".into()),
+            Outcome::Selected(_) => Err("Room flow returned a game selection".into()),
+        }
+    }
+
+    pub fn choose_game(
+        &mut self,
+        browser: &mut crate::catalog::Browser,
+    ) -> Result<Option<Context>> {
+        match self.run_screen(
+            None,
+            None,
+            false,
+            Some(browser),
+            SessionPurpose::Game,
+            false,
+        )? {
+            Outcome::Selected(context) => Ok(Some(*context)),
+            Outcome::Exit(_) => Ok(None),
+            Outcome::Mode(_) => Err("Browser returned a mode selection".into()),
+        }
+    }
+
+    pub fn choose_mode(&mut self) -> Result<Option<FlowExit>> {
+        match self.run_screen(None, None, false, None, SessionPurpose::NetworkOnly, true)? {
+            Outcome::Mode(mode) => Ok(Some(mode)),
+            Outcome::Exit(_) => Ok(None),
+            _ => Err("Invalid mode result".into()),
+        }
+    }
+
+    pub fn run_network(&mut self) -> Result<bool> {
+        match self.run_screen(
+            None,
+            Some(crate::session::NativeBackend::for_intent(
+                crate::purpose::SessionIntent::NetworkOnly,
+            )),
+            false,
+            None,
+            SessionPurpose::NetworkOnly,
+            false,
+        )? {
+            Outcome::Mode(FlowExit::KeepNetwork) => Ok(true),
+            Outcome::Exit(_) => Ok(false),
+            _ => Err("Invalid network result".into()),
+        }
+    }
+
+    fn run_screen(
+        &mut self,
+        context: Option<Context>,
+        backend: Option<Arc<dyn Backend>>,
+        single_player: bool,
+        mut browser: Option<&mut crate::catalog::Browser>,
+        purpose: SessionPurpose,
+        mode_picker: bool,
+    ) -> Result<Outcome> {
+        let sender = self.display.begin_screen();
+        if let Some(browser) = &mut browser {
+            browser.input_epoch = monotonic();
+        }
+        let mut preparing = None;
+        let result = (|| -> Result<Outcome> {
+            let mut flow = if mode_picker {
+                Flow::modes()
+            } else if purpose == SessionPurpose::NetworkOnly {
+                Flow::network()
+            } else {
+                Flow::new(context)
+            };
+            if !single_player {
+                flow.manual();
+            }
+            let mut last_status = 0.0;
+            let mut last_scan = 0.0;
+            let mut next_refresh = 0.0;
+            let mut status_pending = false;
+            let mut scan_pending = false;
+            while flow.exit_code.is_none() && !self.display.stopped() {
+                if let Some(browser) = &mut browser {
+                    if browser.exit {
+                        return Ok(Outcome::Exit(0));
+                    }
+                    if let Some(context) = browser.selected_context.take() {
+                        return Ok(Outcome::Selected(Box::new(context)));
+                    }
+                    self.display.present(browser.view())?;
+                    match self.display.receive() {
+                        Ok(Some(Event::Input(action, at))) if at >= browser.input_epoch => {
+                            if let Some(entry) = browser.dispatch(&action)? {
+                                let sender = sender.clone();
+                                preparing = Some(thread::spawn(move || {
+                                    let result = entry
+                                        .prepare()
+                                        .map(Box::new)
+                                        .map_err(|error| error.to_string());
+                                    sender.send(Event::Prepared(result));
+                                }));
+                            }
+                        }
+                        Ok(Some(Event::Prepared(result))) => {
+                            if let Some(worker) = preparing.take() {
+                                let _ = worker.join();
+                            }
+                            browser.prepared(result.map(|context| *context));
+                        }
+                        Ok(Some(Event::FrameReady)) => {
+                            log(json!({"phase":"frame_submitted","frame_submitted":true}))?
+                        }
+                        Ok(Some(Event::Eof)) => return Err("Graphical game browser closed".into()),
+                        Ok(None) | Err(mpsc::RecvTimeoutError::Timeout) => {}
+                        Err(error) => return Err(error.into()),
+                        _ => {}
+                    }
+                    continue;
+                }
+                let now = monotonic();
+                flow.expire();
+                if let Some(backend) = &backend {
+                    if !status_pending && now - last_status >= 0.25 {
+                        status_pending = true;
+                        last_status = now;
+                        let generation = flow.generation;
+                        let backend = backend.clone();
+                        let sender = sender.clone();
+                        thread::spawn(move || {
+                            let result = backend.call("status", &json!({})).unwrap_or(Value::Null);
+                            sender.send(Event::Status(generation, result));
+                        });
+                    }
+                    if !scan_pending
+                        && flow.page == Page::Rooms
+                        && (flow.refresh_requested || now - last_scan >= 0.35)
+                    {
+                        scan_pending = true;
+                        last_scan = now;
+                        let force = flow.refresh_requested;
+                        flow.refresh_requested = false;
+                        let refresh = force || now >= next_refresh;
+                        if refresh {
+                            next_refresh = now + 4.0;
+                        }
+                        let generation = flow.generation;
+                        let backend = backend.clone();
+                        let sender = sender.clone();
+                        thread::spawn(move || {
+                            let result = backend
+                                .call(
+                                    if refresh { "scan_refresh" } else { "scan" },
+                                    &json!({"force":force}),
+                                )
+                                .unwrap_or_else(
+                                    |error| json!({"rooms":[],"scan_error":error.to_string()}),
+                                );
+                            sender.send(Event::Scan(generation, result));
+                        });
+                    }
+                    if let Some(request) = flow.request.take() {
+                        let backend = backend.clone();
+                        let sender = sender.clone();
+                        thread::spawn(move || {
+                            let (result, failed) =
+                                match backend.call(request.operation.name(), &request.payload) {
+                                    Ok(value) => (value, false),
+                                    Err(error) => {
+                                        let mut value = backend.failure_snapshot();
+                                        value["error"] = error.to_string().into();
+                                        (value, true)
+                                    }
+                                };
+                            sender.send(Event::Action(request, result, failed));
+                        });
+                    }
+                }
+                self.display.present(flow.view())?;
+                match self.display.receive() {
+                    Ok(Some(Event::Input(action, at))) => {
+                        if !self.display.stopped() {
+                            flow.dispatch(&action, at);
+                        }
+                    }
+                    Ok(Some(Event::FrameReady)) => {
+                        log(json!({"phase":"frame_submitted","frame_submitted":true}))?
+                    }
+                    Ok(Some(Event::Eof)) => {
+                        return Err("Graphical menu closed before game handoff".into());
+                    }
+                    Ok(Some(Event::Status(generation, result))) => {
+                        status_pending = false;
+                        if !result.is_null() {
+                            flow.status(generation, result);
+                        }
+                    }
+                    Ok(Some(Event::Scan(generation, result))) => {
+                        scan_pending = false;
+                        flow.scan(generation, result);
+                    }
+                    Ok(Some(Event::Action(request, result, failed))) => {
+                        flow.complete(&request, result, failed)
+                    }
+                    Ok(Some(Event::Prepared(_))) => {}
+                    Ok(None) | Err(mpsc::RecvTimeoutError::Timeout) => {}
+                    Err(error) => return Err(error.into()),
+                }
+            }
+            log(
+                json!({"phase":"finished","exit_code":flow.exit_code.unwrap_or(0),"last_view":self.display.previous()}),
+            )?;
+            Ok(match flow.outcome {
+                Some(mode) => Outcome::Mode(mode),
+                None => Outcome::Exit(flow.exit_code.unwrap_or(0)),
+            })
+        })();
+        if let Some(worker) = preparing {
+            let _ = worker.join();
+        }
+        if let Err(error) = &result {
+            log(json!({"phase":"failed","error":error.to_string()}))?;
+        }
+        result
     }
 }
 
 pub fn run(context: Option<Context>, backend: Option<Arc<dyn Backend>>) -> Result<i32> {
-    run_with_fallback(context, backend, true)
-}
-pub fn run_with_fallback(
-    context: Option<Context>,
-    backend: Option<Arc<dyn Backend>>,
-    single_player: bool,
-) -> Result<i32> {
-    match run_screen(
-        context,
-        backend,
-        single_player,
-        None,
-        SessionPurpose::Game,
-        false,
-    )? {
-        Outcome::Exit(code) => Ok(code),
-        Outcome::Mode(_) => Err("Game flow returned a mode selection".into()),
-        Outcome::Selected(_) => Err("Room flow returned a game selection".into()),
-    }
-}
-
-pub fn choose_game(browser: &mut crate::catalog::Browser) -> Result<Option<Context>> {
-    match run_screen(
-        None,
-        None,
-        false,
-        Some(browser),
-        SessionPurpose::Game,
-        false,
-    )? {
-        Outcome::Selected(context) => Ok(Some(*context)),
-        Outcome::Exit(_) => Ok(None),
-        Outcome::Mode(_) => Err("Browser returned a mode selection".into()),
-    }
-}
-
-pub fn choose_mode() -> Result<Option<FlowExit>> {
-    match run_screen(None, None, false, None, SessionPurpose::NetworkOnly, true)? {
-        Outcome::Mode(mode) => Ok(Some(mode)),
-        Outcome::Exit(_) => Ok(None),
-        _ => Err("Invalid mode result".into()),
-    }
+    MenuSession::open()?.run_with_fallback(context, backend, true)
 }
 
 pub fn run_network() -> Result<bool> {
-    match run_screen(
-        None,
-        Some(crate::session::NativeBackend::for_intent(
-            crate::purpose::SessionIntent::NetworkOnly,
-        )),
-        false,
-        None,
-        SessionPurpose::NetworkOnly,
-        false,
-    )? {
-        Outcome::Mode(FlowExit::KeepNetwork) => Ok(true),
-        Outcome::Exit(_) => Ok(false),
-        _ => Err("Invalid network result".into()),
-    }
-}
-
-fn run_screen(
-    context: Option<Context>,
-    backend: Option<Arc<dyn Backend>>,
-    single_player: bool,
-    mut browser: Option<&mut crate::catalog::Browser>,
-    purpose: SessionPurpose,
-    mode_picker: bool,
-) -> Result<Outcome> {
-    let root = Path::new("/run/arkos-nearby-rust/ui");
-    mkdir(root)?;
-    let directory = Temporary(root.join(random_id()?));
-    mkdir(&directory.0)?;
-    let keys = directory.0.join("keys.gptk");
-    private_write(&keys, KEYS.as_bytes())?;
-    let logs = Path::new(INSTALL).join("logs");
-    mkdir(&logs)?;
-    log(json!({"phase":"gui-spawn"}))?;
-    let mut mapper = OwnedChild(
-        Command::new("/opt/inttools/gptokeyb")
-            .args(["-c", keys.to_str().ok_or("Invalid key mapping path")?])
-            .env("TERM", "linux")
-            .env("LANG", "C.UTF-8")
-            .env("LC_ALL", "C.UTF-8")
-            .env(
-                "SDL_GAMECONTROLLERCONFIG_FILE",
-                "/opt/inttools/gamecontrollerdb.txt",
-            )
-            .stdout(Stdio::from(File::create(logs.join("native-mapper.log"))?))
-            .stderr(Stdio::null())
-            .spawn()?,
-    );
-    let mut gui = OwnedChild(
-        Command::new(format!("{INSTALL}/arkos-nearby-gui"))
-            .env("TERM", "linux")
-            .env("LANG", "C.UTF-8")
-            .env("LC_ALL", "C.UTF-8")
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::from(File::create(logs.join("native-gui.log"))?))
-            .spawn()?,
-    );
-    let mut stdin = gui.0.stdin.take().ok_or("GUI has no input channel")?;
-    let stdout = gui.0.stdout.take().ok_or("GUI has no output channel")?;
-    let (sender, receiver) = mpsc::channel();
-    let input_sender = sender.clone();
-    let reader = thread::spawn(move || {
-        let mut reader = BufReader::new(stdout);
-        loop {
-            let mut line = Vec::new();
-            let result = (&mut reader).take(16385).read_until(b'\n', &mut line);
-            if !matches!(result,Ok(count) if count > 0 && count <= 16384) {
-                break;
-            }
-            if let Ok(value) = serde_json::from_slice::<Value>(&line) {
-                let event = if value == json!({"event":"frame_ready"}) {
-                    Some(Event::FrameReady)
-                } else {
-                    value
-                        .as_str()
-                        .filter(|s| {
-                            matches!(
-                                *s,
-                                "up" | "down"
-                                    | "left"
-                                    | "right"
-                                    | "confirm"
-                                    | "back"
-                                    | "refresh"
-                                    | "page_up"
-                                    | "page_down"
-                            )
-                        })
-                        .map(|s| Event::Input(s.into(), monotonic()))
-                };
-                if let Some(event) = event {
-                    if input_sender.send(event).is_err() {
-                        return;
-                    }
-                }
-            }
-        }
-        let _ = input_sender.send(Event::Eof);
-    });
-    let stopping = Arc::new(AtomicBool::new(false));
-    let mut signals = Vec::new();
-    for signal in [libc::SIGTERM, libc::SIGHUP] {
-        signals.push(signal_hook::flag::register(signal, stopping.clone())?);
-    }
-    let mut preparing = None;
-    let result = (|| -> Result<Outcome> {
-        let mut flow = if mode_picker {
-            Flow::modes()
-        } else if purpose == SessionPurpose::NetworkOnly {
-            Flow::network()
-        } else {
-            Flow::new(context)
-        };
-        if !single_player {
-            flow.manual();
-        }
-        let mut previous = Value::Null;
-        let mut last_status = 0.0;
-        let mut last_scan = 0.0;
-        let mut next_refresh = 0.0;
-        let mut status_pending = false;
-        let mut scan_pending = false;
-        while flow.exit_code.is_none() && !stopping.load(Ordering::Relaxed) {
-            if let Some(browser) = &mut browser {
-                if browser.exit {
-                    return Ok(Outcome::Exit(0));
-                }
-                if let Some(context) = browser.selected_context.take() {
-                    return Ok(Outcome::Selected(Box::new(context)));
-                }
-                let view = browser.view();
-                if view != previous {
-                    serde_json::to_writer(&mut stdin, &view)?;
-                    stdin.write_all(b"\n")?;
-                    stdin.flush()?;
-                    previous = view;
-                }
-                require(
-                    mapper.0.try_wait()?.is_none(),
-                    "The owned gamepad mapper stopped",
-                )?;
-                match receiver.recv_timeout(Duration::from_millis(20)) {
-                    Ok(Event::Input(action, at)) if at >= browser.input_epoch => {
-                        if let Some(entry) = browser.dispatch(&action)? {
-                            let sender = sender.clone();
-                            preparing = Some(thread::spawn(move || {
-                                let result = entry
-                                    .prepare()
-                                    .map(Box::new)
-                                    .map_err(|error| error.to_string());
-                                let _ = sender.send(Event::Prepared(result));
-                            }));
-                        }
-                    }
-                    Ok(Event::Prepared(result)) => {
-                        if let Some(worker) = preparing.take() {
-                            let _ = worker.join();
-                        }
-                        browser.prepared(result.map(|context| *context));
-                    }
-                    Ok(Event::FrameReady) => {
-                        log(json!({"phase":"frame_submitted","frame_submitted":true}))?
-                    }
-                    Ok(Event::Eof) => return Err("Graphical game browser closed".into()),
-                    Err(mpsc::RecvTimeoutError::Timeout) => {}
-                    Err(error) => return Err(error.into()),
-                    _ => {}
-                }
-                continue;
-            }
-            let now = monotonic();
-            flow.expire();
-            if let Some(backend) = &backend {
-                if !status_pending && now - last_status >= 0.25 {
-                    status_pending = true;
-                    last_status = now;
-                    let generation = flow.generation;
-                    let backend = backend.clone();
-                    let sender = sender.clone();
-                    thread::spawn(move || {
-                        let result = backend.call("status", &json!({})).unwrap_or(Value::Null);
-                        let _ = sender.send(Event::Status(generation, result));
-                    });
-                }
-                if !scan_pending
-                    && flow.page == Page::Rooms
-                    && (flow.refresh_requested || now - last_scan >= 0.35)
-                {
-                    scan_pending = true;
-                    last_scan = now;
-                    let force = flow.refresh_requested;
-                    flow.refresh_requested = false;
-                    let refresh = force || now >= next_refresh;
-                    if refresh {
-                        next_refresh = now + 4.0;
-                    }
-                    let generation = flow.generation;
-                    let backend = backend.clone();
-                    let sender = sender.clone();
-                    thread::spawn(move || {
-                        let result = backend
-                            .call(
-                                if refresh { "scan_refresh" } else { "scan" },
-                                &json!({"force":force}),
-                            )
-                            .unwrap_or_else(
-                                |error| json!({"rooms":[],"scan_error":error.to_string()}),
-                            );
-                        let _ = sender.send(Event::Scan(generation, result));
-                    });
-                }
-                if let Some(request) = flow.request.take() {
-                    let backend = backend.clone();
-                    let sender = sender.clone();
-                    thread::spawn(move || {
-                        let (result, failed) =
-                            match backend.call(request.operation.name(), &request.payload) {
-                                Ok(value) => (value, false),
-                                Err(error) => {
-                                    let mut value = backend.failure_snapshot();
-                                    value["error"] = error.to_string().into();
-                                    (value, true)
-                                }
-                            };
-                        let _ = sender.send(Event::Action(request, result, failed));
-                    });
-                }
-            }
-            let view = flow.view();
-            if view != previous {
-                serde_json::to_writer(&mut stdin, &view)?;
-                stdin.write_all(b"\n")?;
-                stdin.flush()?;
-                previous = view;
-            }
-            require(
-                mapper.0.try_wait()?.is_none(),
-                "The owned gamepad mapper stopped",
-            )?;
-            match receiver.recv_timeout(Duration::from_millis(20)) {
-                Ok(Event::Input(action, at)) => {
-                    if !stopping.load(Ordering::Relaxed) {
-                        flow.dispatch(&action, at);
-                    }
-                }
-                Ok(Event::FrameReady) => {
-                    log(json!({"phase":"frame_submitted","frame_submitted":true}))?
-                }
-                Ok(Event::Eof) => return Err("Graphical menu closed before game handoff".into()),
-                Ok(Event::Status(generation, result)) => {
-                    status_pending = false;
-                    if !result.is_null() {
-                        flow.status(generation, result);
-                    }
-                }
-                Ok(Event::Scan(generation, result)) => {
-                    scan_pending = false;
-                    flow.scan(generation, result);
-                }
-                Ok(Event::Action(request, result, failed)) => {
-                    flow.complete(&request, result, failed)
-                }
-                Ok(Event::Prepared(_)) => {}
-                Err(mpsc::RecvTimeoutError::Timeout) => {}
-                Err(error) => return Err(error.into()),
-            }
-        }
-        log(
-            json!({"phase":"finished","exit_code":flow.exit_code.unwrap_or(0),"last_view":previous}),
-        )?;
-        Ok(match flow.outcome {
-            Some(mode) => Outcome::Mode(mode),
-            None => Outcome::Exit(flow.exit_code.unwrap_or(0)),
-        })
-    })();
-    if let Some(worker) = preparing {
-        let _ = worker.join();
-    }
-    for signal in signals {
-        signal_hook::low_level::unregister(signal);
-    }
-    drop(stdin);
-    drop(gui);
-    drop(mapper);
-    let _ = reader.join();
-    if let Err(error) = &result {
-        log(json!({"phase":"failed","error":error.to_string()}))?;
-    }
-    result
+    MenuSession::open()?.run_network()
 }

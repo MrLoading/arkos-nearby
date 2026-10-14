@@ -6,6 +6,8 @@ Device behavior belongs to the native Rust runtime. Preserve manual entry points
 
 `purpose.rs` defines game and network-only session intents. `network.rs` owns authenticated network membership and peer leases. Options offers Network Only and Choose Game; retaining a network closes the interface while membership continues. Recovery owns only the active session's network resources and preserves independently launched Ports processes. Keep ended-session addresses and peer lists empty.
 
+Keep one MenuSession for the entire Options interaction. menu/display.rs owns the GUI and mapper processes; changing modes, browsing games and returning from a room must not restart them. Background replies belong to their originating screen, and queued input must not leak across screen handoffs. The GUI render modules separate state, copy, style, fonts, shared widgets, pages and composition; model.rs remains the serialized display protocol.
+
 Public documentation describes current behavior and measured compatibility. Renderer snapshots illustrate the interface; metadata checks and synthetic captures do not establish game-specific multiplayer acceptance. Code and comments use English. Markdown paragraphs use one physical line each.
 
 README and release notes cover the actual product and its installation/play workflow. Keep conversation constraints and rejected proposals in agent instructions. Prefer concrete requirements and compatibility results over hypothetical contrasts or absence/guarantee disclaimers. Use a concise introduction, useful badges, interface previews and a short quick start.
