@@ -76,8 +76,8 @@ def bundle():
                 "source_sha256": report["source_sha256"],
                 "cargo_lock_sha256": report["cargo_lock_sha256"],
                 "mirui_crate_sha256": report["mirui_crate_sha256"],
-                "mirui_patch_sha256": report["mirui_patch_sha256"],
-                "effective_cargo_lock_sha256": report["effective_cargo_lock_sha256"],
+                "mirui_macros_crate_sha256": report["mirui_macros_crate_sha256"],
+                "mirx_crate_sha256": report["mirx_crate_sha256"],
             }
             data = json.dumps(sources, indent=2).encode()
             entry.update(sha256=sha(data), size=len(data))

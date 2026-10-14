@@ -20,9 +20,11 @@ cargo +1.92.0 fetch --locked --manifest-path gui/nearby/Cargo.toml --target aarc
 CC_aarch64_unknown_linux_musl=/path/to/clang AR_aarch64_unknown_linux_musl=/path/to/llvm-ar python3 scripts/build.py build
 ```
 
-输出为 `dist/arkos-nearby` 和 `dist/SHA256SUMS`。所有 Cargo 编译目录位于 `/tmp/arkos-rust-build/public/`，直接 Cargo 命令使用 `/tmp/arkos-rust-build/public-cargo/`。GUI 固定 mirui 和 mirx 0.48.0，页面使用 `#[compose]`、`ui!` 与 Flex 布局，文字按可用空间换行或省略。构建记录和安装资产校验读取 Cargo.toml 与 Cargo.lock 中的实际版本。
+输出为 `dist/arkos-nearby` 和 `dist/SHA256SUMS`。所有 Cargo 编译目录位于 `/tmp/arkos-rust-build/public/`，直接 Cargo 命令使用 `/tmp/arkos-rust-build/public-cargo/`。GUI 固定 mirui 和 mirx 0.49.0，页面使用 `#[compose]`、`ui!` 与 Flex 布局，文字按可用空间换行或省略。构建记录和安装资产校验读取 Cargo.toml 与 Cargo.lock 中的实际版本。
 
-GUI 通过 `scripts/build_nearby_gui.py` 构建和检查。脚本校验缓存的 mirui crate，在外部目录应用 `gui/nearby/patches/mirui-0.48.0.patch`，然后使用派生锁文件离线编译。补丁提供文字局部失效与 App 布局管理接口；构建记录包含原始 crate、补丁及派生锁文件的摘要。源码格式检查使用仓库中的文件，Clippy 和测试使用同一份应用补丁后的源码。
+GUI 通过 `scripts/build_nearby_gui.py` 构建和检查，直接使用 Cargo.lock 锁定的 registry 包。构建记录包含 mirui、mirui-macros、mirx 的 crate 校验和、应用源码摘要和实际锁文件摘要。页面由 PageView 挂载和释放，焦点框通过 FollowBounds 与共享动画调度跟随目标。灰度位图字体的采样外缘使用 PaintInflate 计入重绘覆盖。源码、Clippy、测试和 ARM64 构建使用同一份未修改的框架包。
+
+先执行 `python3 scripts/build_nearby_gui.py build` 生成当前源码对应的 GUI 和来源记录，再执行质量检查。`release/manifest.json` 和 `release/assets.json` 保留已发行安装资产的身份；构建时将当前 GUI 及其来源记录放入新的本地 bundle，不把本地构建等同于已发布的掌机验收版本。
 
 准备发行归档时，先完成构建和校验，再执行 `python3 scripts/package.py --binary dist/arkos-nearby --expected-sha256 VERIFIED_SHA256`。将 `VERIFIED_SHA256` 替换为构建结果的 SHA-256。程序核对摘要与 ARM64 ELF 类型，打包安装脚本、使用说明和许可证。
 

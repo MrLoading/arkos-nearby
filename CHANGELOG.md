@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+- Animate page entry and return while keeping the current room state.
+- Keep the selection border aligned during room refreshes and connection updates.
+
 ## [0.4.0] - 2026-10-11
 
 - Add Network Only and Choose Game entries in Options.

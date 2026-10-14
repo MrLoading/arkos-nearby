@@ -1,16 +1,22 @@
 use std::rc::Rc;
 
 use mirui::ecs::Entity;
-use mirui::prelude::draw::*;
 use mirui::prelude::*;
 use mirui::render::font::{Font, FontBackend, FontManager, FontToken, mirx::MirxFontProvider};
 use mirui::surface::FramebufferAccess;
+use mirui::ui::OffscreenRender;
+use mirui::ui::widgets::navigation::{PageDirection, PageTransition};
+use mirui::ui::widgets::page_view::{self, CreatePage, PageView};
 use mirui::ui::widgets::{ParagraphStyle, Text, TextAlign, TextOverflow, TextWrap};
-use mirui::ui::{Children, ComputedRect, IdMap, OffscreenRender};
+
+mod selection;
 
 use crate::model::{Page, Phase, View};
 use TextAlign::{Center, End, Start};
 use TextField::{Headline, HostButton, Next, Peer};
+
+const FONT_PAINT: mirui::ui::dirty::PaintInflate =
+    mirui::ui::dirty::PaintInflate::uniform(Fixed::ONE);
 
 const FONT: FontToken = FontToken::Custom("nearby_menu");
 const FONT_BYTES: &[u8] = include_bytes!("../assets/nearby-menu-20.mirx");
@@ -24,18 +30,6 @@ const DISABLED: Color = Color::rgb(131, 117, 99);
 const DIVIDER: Color = Color::rgb(204, 192, 169);
 const WARNING: Color = Color::rgb(152, 106, 32);
 const WARNING_PANEL: Color = Color::rgb(233, 218, 186);
-
-trait TextSignal {
-    fn set_if_changed(&self, next: &str);
-}
-
-impl TextSignal for Signal<String> {
-    fn set_if_changed(&self, next: &str) {
-        if self.get_untracked() != next {
-            self.set(next.to_owned());
-        }
-    }
-}
 
 #[derive(Clone, Copy)]
 enum TextField {
@@ -51,8 +45,23 @@ struct StepColors {
     foreground: Color,
 }
 
+fn publish<T: Clone + PartialEq>(signal: &Signal<T>, value: T) {
+    if signal.get_untracked() != value {
+        signal.set(value);
+    }
+}
+
 #[model]
 struct DisplayState {
+    view: View,
+    direction: PageDirection,
+    rooms: Signal<Vec<(usize, crate::model::RoomRow)>>,
+    entries: Signal<Vec<crate::model::GameRow>>,
+    address: Signal<String>,
+    peers: Signal<String>,
+    room_name: Signal<String>,
+    heading: Signal<String>,
+    subtitle: Signal<String>,
     status: Signal<String>,
     hint: Signal<String>,
     back: Signal<String>,
@@ -74,18 +83,22 @@ struct DisplayState {
 #[model]
 impl DisplayState {
     fn present(&mut self, view: &View) {
-        self.status.set_if_changed(status_text(view));
-        self.hint.set_if_changed(hint_text(view));
-        self.back.set_if_changed(if view.back_label.is_empty() {
-            "返回"
-        } else {
-            &view.back_label
-        });
-        self.headline.set_if_changed(headline(view));
-        self.next.set_if_changed(next_step(view));
-        self.host_button.set_if_changed(button_text(view));
-        self.peer.set_if_changed(peer_text(view));
-        self.confirm.set_if_changed(confirm_text(view));
+        publish(&self.status, status_text(view).into());
+        publish(&self.hint, hint_text(view).into());
+        publish(
+            &self.back,
+            if view.back_label.is_empty() {
+                "返回"
+            } else {
+                &view.back_label
+            }
+            .into(),
+        );
+        publish(&self.headline, headline(view).into());
+        publish(&self.next, next_step(view).into());
+        publish(&self.host_button, button_text(view).into());
+        publish(&self.peer, peer_text(view).into());
+        publish(&self.confirm, confirm_text(view).into());
         self.confirm_visible = !confirm_text(view).is_empty();
         let active = match phase(view) {
             Phase::Connecting => Some(0),
@@ -111,8 +124,72 @@ impl DisplayState {
                 }
             }
         });
+        let first = view
+            .selected
+            .saturating_sub(3)
+            .min(view.rooms.len().saturating_sub(4));
+        let rows: Vec<_> = view
+            .rooms
+            .iter()
+            .enumerate()
+            .skip(first)
+            .take(4)
+            .map(|(i, row)| (i, row.clone()))
+            .collect();
+        publish(&self.rooms, rows);
+        let entries: Vec<_> = view.entries.iter().take(4).cloned().collect();
+        publish(&self.entries, entries);
+        publish(
+            &self.address,
+            if view.local_address.is_empty() {
+                "等待分配地址".into()
+            } else {
+                format!("本机  {}", view.local_address)
+            },
+        );
+        publish(
+            &self.peers,
+            view.peers
+                .iter()
+                .map(|peer| format!("{}  {}", peer.name, peer.address))
+                .collect::<Vec<_>>()
+                .join("\n"),
+        );
+        publish(&self.room_name, view.room_name.clone());
+        publish(&self.heading, page_heading(view).into());
+        publish(
+            &self.subtitle,
+            match view.page {
+                Page::Mode => "连接附近的掌机".into(),
+                _ if view.network_only => "仅组网 · 局域网连接".into(),
+                Page::Games => view.core.clone(),
+                _ => format!("当前游戏  {}", view.title),
+            },
+        );
+        self.view.clone_from(view);
     }
 
+    fn rooms(&self) -> Vec<(usize, crate::model::RoomRow)> {
+        self.rooms.get()
+    }
+    fn entries(&self) -> Vec<crate::model::GameRow> {
+        self.entries.get()
+    }
+    fn address(&self) -> String {
+        self.address.get()
+    }
+    fn peers(&self) -> String {
+        self.peers.get()
+    }
+    fn room_name(&self) -> String {
+        self.room_name.get()
+    }
+    fn heading(&self) -> String {
+        self.heading.get()
+    }
+    fn subtitle(&self) -> String {
+        self.subtitle.get()
+    }
     fn status(&self) -> String {
         self.status.get()
     }
@@ -138,6 +215,61 @@ impl DisplayState {
         self.confirm.get()
     }
 
+    fn snapshot(&self) -> View {
+        self.view.clone()
+    }
+
+    #[observe]
+    fn page_key(&self) -> PageKey {
+        PageKey {
+            page: self.view.page,
+            network_only: self.view.network_only
+                && matches!(
+                    self.view.page,
+                    Page::Choice | Page::Rooms | Page::Host | Page::Joined | Page::Leaving
+                ),
+        }
+    }
+
+    #[observe]
+    fn transition(&self) -> PageTransition {
+        PageTransition::slide(mirui::anim::SNAPPY).with_direction(self.direction)
+    }
+
+    #[cfg(any(target_os = "linux", test))]
+    fn navigate_back(&mut self) {
+        self.direction = PageDirection::Backward;
+    }
+
+    #[cfg(any(target_os = "linux", test))]
+    fn navigate_forward(&mut self) {
+        self.direction = PageDirection::Forward;
+    }
+
+    #[observe]
+    fn selected(&self) -> Option<usize> {
+        match self.view.page {
+            Page::Mode | Page::Choice => Some(self.view.selected.min(1)),
+            Page::Rooms if !self.view.rooms.is_empty() => {
+                Some(self.view.selected.min(self.view.rooms.len() - 1))
+            }
+            Page::Games if !self.view.entries.is_empty() => Some(self.view.selected.min(3)),
+            Page::Host if host_action_enabled(&self.view) => Some(0),
+            Page::Joined if self.view.network_only && host_action_enabled(&self.view) => Some(0),
+            _ => None,
+        }
+    }
+
+    #[observe]
+    fn ready(&self) -> bool {
+        self.view.ready
+    }
+
+    #[observe]
+    fn enabled(&self) -> bool {
+        host_action_enabled(&self.view)
+    }
+
     fn feedback(&mut self, stamp: Color, activity: [Color; 3]) {
         self.stamp = stamp;
         self.activity = activity;
@@ -145,6 +277,12 @@ impl DisplayState {
 }
 
 type DisplayHandle = <DisplayState as mirui::core::model::Model>::Handle;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct PageKey {
+    page: Page,
+    network_only: bool,
+}
 
 impl DisplayStateHandle {
     fn text(&self, field: TextField) -> String {
@@ -163,7 +301,9 @@ struct DisplayRuntime {
 
 pub fn install_fonts<B: FramebufferAccess>(app: &mut App<B>) -> Result<(), String> {
     app.with_offscreen_pool_budget(2 * 1024 * 1024);
-    app.with_widget(paint_focus::view());
+    app.with_widget(page_view::view::<PageKey>());
+    app.with_widget(selection::target::view());
+    app.with_widget(selection::frame::view());
     let limits = mirx::reader::PayloadLimits::HOST;
     let options = mirx::reader::ReadOptions::new().with_payload_limits(limits);
     let reader = mirx::Reader::open_with(FONT_BYTES, &options)
@@ -185,25 +325,36 @@ pub fn install_fonts<B: FramebufferAccess>(app: &mut App<B>) -> Result<(), Strin
     let fonts = FontManager::new(mirui::core::cache::MaxSize::Unbound, Font::bitmap_8x8());
     fonts.add_static(FONT.cache_key(), font);
     app.with_fonts(fonts);
-    let state = app.add_model(DisplayState {
-        status: Signal::new(String::new()),
-        hint: Signal::new(String::new()),
-        back: Signal::new(String::new()),
-        headline: Signal::new(String::new()),
-        next: Signal::new(String::new()),
-        host_button: Signal::new(String::new()),
-        peer: Signal::new(String::new()),
-        confirm: Signal::new(String::new()),
-        confirm_visible: false,
-        steps: [StepColors {
-            background: PANEL,
-            foreground: DISABLED,
-        }; 3],
-        stamp: ACCENT_DIM,
-        activity: [BACKGROUND; 3],
-    });
+    let state = app
+        .add_model(DisplayState {
+            view: View::default(),
+            direction: PageDirection::Forward,
+            rooms: Signal::new(Vec::new()),
+            entries: Signal::new(Vec::new()),
+            address: Signal::new(String::new()),
+            peers: Signal::new(String::new()),
+            room_name: Signal::new(String::new()),
+            heading: Signal::new(String::new()),
+            subtitle: Signal::new(String::new()),
+            status: Signal::new(String::new()),
+            hint: Signal::new(String::new()),
+            back: Signal::new(String::new()),
+            headline: Signal::new(String::new()),
+            next: Signal::new(String::new()),
+            host_button: Signal::new(String::new()),
+            peer: Signal::new(String::new()),
+            confirm: Signal::new(String::new()),
+            confirm_visible: false,
+            steps: [StepColors {
+                background: PANEL,
+                foreground: DISABLED,
+            }; 3],
+            stamp: ACCENT_DIM,
+            activity: [BACKGROUND; 3],
+        })
+        .finish();
+    app.add_system(selection::update::system(state.clone()));
     app.add_resource(DisplayRuntime { state });
-    app.add_resource(FocusGeometry(None));
     Ok(())
 }
 
@@ -239,7 +390,18 @@ impl Metrics {
 struct StaticCache;
 
 #[component]
-struct FocusTarget;
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Section {
+    Shell,
+    Header,
+    Content,
+    Footer,
+    Status,
+    FocusList,
+    FocusHost,
+}
+
+use selection::FocusTarget;
 
 fn paragraph(align: TextAlign, lines: u16) -> ParagraphStyle {
     ParagraphStyle {
@@ -266,7 +428,9 @@ fn label(value: &str, size: u16, color: Color, align: TextAlign) -> Entity {
             text_color: color,
             paragraph: paragraph(align, 1),
             clip_children: true
-        )
+        ) [
+            FONT_PAINT,
+        ]
     }
 }
 
@@ -290,21 +454,14 @@ fn live_label(
             text_color: color,
             paragraph: paragraph(align, 1),
             clip_children: true
-        )
+        ) [
+            FONT_PAINT,
+        ]
     }
 }
 
 #[compose]
 fn header(view: &View, state: model!(DisplayState), metrics: Metrics) -> Entity {
-    let subtitle = if view.page == Page::Mode {
-        "连接附近的掌机".into()
-    } else if view.network_only {
-        "仅组网 · 局域网连接".into()
-    } else if view.page == Page::Games {
-        view.core.clone()
-    } else {
-        format!("当前游戏  {}", view.title)
-    };
     let step = if view.page == Page::Mode {
         "选择模式".into()
     } else if view.page == Page::Games {
@@ -314,12 +471,13 @@ fn header(view: &View, state: model!(DisplayState), metrics: Metrics) -> Entity 
     };
     ui! {
         Row (
-            id: "nearby_header",
             height: if metrics.compact { 44 } else { 68 },
             shrink: 0.0,
             column_gap: metrics.gap + 4,
             align: AlignItems::Center
-        ) {
+        ) [
+            Section::Header,
+        ] {
             Row (
                 width: if metrics.compact { 30 } else { 42 },
                 height: if metrics.compact { 30 } else { 42 },
@@ -360,12 +518,16 @@ fn header(view: &View, state: model!(DisplayState), metrics: Metrics) -> Entity 
                     FOREGROUND,
                     Start
                 )
-                label (
-                    &subtitle,
-                    metrics.small,
-                    SECONDARY,
-                    Start
-                )
+                Text (
+                    text: ${ state.subtitle() },
+                    font: FONT,
+                    font_size: metrics.small,
+                    text_color: SECONDARY,
+                    height: Dimension::Content,
+                    paragraph: paragraph(Start, 1)
+                ) [
+                    FONT_PAINT,
+                ]
             }
             Text (
                 step,
@@ -377,7 +539,9 @@ fn header(view: &View, state: model!(DisplayState), metrics: Metrics) -> Entity 
                 font_size: metrics.small,
                 text_color: SECONDARY,
                 paragraph: paragraph(Center, 1)
-            )
+            ) [
+                FONT_PAINT,
+            ]
         }
     }
 }
@@ -395,7 +559,9 @@ fn keycap(value: &str, metrics: Metrics) -> Entity {
             font_size: metrics.small,
             text_color: SECONDARY,
             paragraph: paragraph(Center, 1)
-        )
+        ) [
+            FONT_PAINT,
+        ]
     }
 }
 
@@ -403,12 +569,13 @@ fn keycap(value: &str, metrics: Metrics) -> Entity {
 fn footer(view: &View, state: model!(DisplayState), metrics: Metrics) -> Entity {
     ui! {
         Row (
-            id: "nearby_footer",
             height: if metrics.compact { 20 } else { 32 },
             shrink: 0.0,
             column_gap: metrics.gap,
             align: AlignItems::Center
-        ) {
+        ) [
+            Section::Footer,
+        ] {
             Text (
                 text: ${ if state.confirm_visible() { "A" } else { "" } },
                 width: if metrics.compact { 20 } else { 25 },
@@ -419,7 +586,9 @@ fn footer(view: &View, state: model!(DisplayState), metrics: Metrics) -> Entity 
                 font_size: metrics.small,
                 text_color: SECONDARY,
                 paragraph: paragraph(Center, 1)
-            )
+            ) [
+                FONT_PAINT,
+            ]
             Text (
                 text: ${ state.confirm() },
                 width: Dimension::Content,
@@ -429,7 +598,9 @@ fn footer(view: &View, state: model!(DisplayState), metrics: Metrics) -> Entity 
                 font_size: metrics.small,
                 text_color: SECONDARY,
                 paragraph: paragraph(Start, 1)
-            )
+            ) [
+                FONT_PAINT,
+            ]
             keycap ("B", metrics)
             Text (
                 text: ${ state.back() },
@@ -440,7 +611,9 @@ fn footer(view: &View, state: model!(DisplayState), metrics: Metrics) -> Entity 
                 font_size: metrics.small,
                 text_color: SECONDARY,
                 paragraph: paragraph(Start, 1)
-            )
+            ) [
+                FONT_PAINT,
+            ]
             if view.page == Page::Rooms {
                 keycap ("X", metrics)
                 Text (
@@ -449,8 +622,11 @@ fn footer(view: &View, state: model!(DisplayState), metrics: Metrics) -> Entity 
                     font: FONT,
                     font_size: metrics.small,
                     text_color: SECONDARY,
-                    paragraph: paragraph(Start, 1)
-                )
+                    paragraph: paragraph(Start, 1),
+                    clip_children: true
+                ) [
+                    FONT_PAINT,
+                ]
             }
             Text (
                 text: ${ state.hint() },
@@ -462,7 +638,9 @@ fn footer(view: &View, state: model!(DisplayState), metrics: Metrics) -> Entity 
                 text_color: SECONDARY,
                 paragraph: paragraph(End, 1),
                 clip_children: true
-            )
+            ) [
+                FONT_PAINT,
+            ]
         }
     }
 }
@@ -487,11 +665,11 @@ fn choice(view: &View, metrics: Metrics) -> Entity {
     };
     ui! {
         Row (
-            id: "focus_list",
             grow: 1.0,
             min_height: 0,
             column_gap: metrics.gap + 6
         ) [
+            Section::FocusList,
             StaticCache,
             OffscreenRender::default(),
         ] {
@@ -505,7 +683,7 @@ fn choice(view: &View, metrics: Metrics) -> Entity {
                     border_radius: 0,
                     clip_children: true
                 ) [
-                    FocusTarget,
+                    FocusTarget { index: card.0 },
                 ] {
                     Row (
                         height: if metrics.compact { 28 } else { 44 },
@@ -520,7 +698,9 @@ fn choice(view: &View, metrics: Metrics) -> Entity {
                             font_size: metrics.title,
                             text_color: ACCENT,
                             paragraph: paragraph(Center, 1)
-                        )
+                        ) [
+                            FONT_PAINT,
+                        ]
                     }
                     View (
                         grow: 1.0,
@@ -541,7 +721,9 @@ fn choice(view: &View, metrics: Metrics) -> Entity {
                         font_size: metrics.small,
                         text_color: SECONDARY,
                         paragraph: paragraph(Start, 2)
-                    )
+                    ) [
+                        FONT_PAINT,
+                    ]
                     if !metrics.compact {
                         label (
                             card.3,
@@ -561,18 +743,19 @@ fn host_action_enabled(view: &View) -> bool {
 }
 
 #[compose]
-fn avatar(number: &str, ready: bool, metrics: Metrics) -> Entity {
+fn avatar(number: &str, state: model!(DisplayState), own: bool, metrics: Metrics) -> Entity {
     ui! {
         Text (
             number.to_owned(),
             width: if metrics.compact { 36 } else { 60 },
             height: if metrics.compact { 36 } else { 60 },
-            bg_color: if ready { ACCENT_DIM } else { PANEL },
+            bg_color: ${ if own || state.ready() { ACCENT_DIM } else { PANEL } },
             font: FONT,
             font_size: metrics.title,
-            text_color: if ready { ACCENT } else { DISABLED },
+            text_color: ${ if own || state.ready() { ACCENT } else { DISABLED } },
             paragraph: paragraph(Center, 1)
         ) [
+            FONT_PAINT,
             StaticCache,
             OffscreenRender::default(),
         ]
@@ -580,8 +763,7 @@ fn avatar(number: &str, ready: bool, metrics: Metrics) -> Entity {
 }
 
 #[compose]
-fn host(view: &View, state: model!(DisplayState), metrics: Metrics) -> Entity {
-    let enabled = host_action_enabled(view);
+fn host(_view: &View, state: model!(DisplayState), metrics: Metrics) -> Entity {
     ui! {
         Column (
             grow: 1.0,
@@ -605,6 +787,7 @@ fn host(view: &View, state: model!(DisplayState), metrics: Metrics) -> Entity {
                 ) {
                     avatar (
                         "1",
+                        state,
                         true,
                         metrics
                     )
@@ -624,7 +807,7 @@ fn host(view: &View, state: model!(DisplayState), metrics: Metrics) -> Entity {
                         View (
                             width: 5,
                             height: 5,
-                            bg_color: if view.ready { ACCENT } else { DISABLED }
+                            bg_color: ${ if state.ready() { ACCENT } else { DISABLED } }
                         )
                     }
                 }
@@ -637,34 +820,35 @@ fn host(view: &View, state: model!(DisplayState), metrics: Metrics) -> Entity {
                 ) {
                     avatar (
                         "2",
-                        view.ready,
+                        state,
+                        false,
                         metrics
                     )
                     live_label (
                         state,
                         Peer,
                         metrics.body,
-                        if view.ready { FOREGROUND } else { SECONDARY },
+                        FOREGROUND,
                         Center
                     )
                 }
             }
             Column (
-                id: "focus_host",
                 height: if metrics.compact { 34 } else { 50 },
                 shrink: 0.0,
-                bg_color: if enabled { ACCENT } else { PANEL },
+                bg_color: ${ if state.enabled() { ACCENT } else { PANEL } },
                 border_color: ACCENT,
-                border_width: if enabled { 2 } else { 0 },
+                border_width: ${ if state.enabled() { 2 } else { 0 } },
                 justify: JustifyContent::Center
             ) [
-                FocusTarget,
+                Section::FocusHost,
+                FocusTarget { index: 0 },
             ] {
                 live_label (
                     state,
                     HostButton,
                     metrics.title,
-                    if enabled { BACKGROUND } else { DISABLED },
+                    BACKGROUND,
                     Center
                 )
             }
@@ -673,19 +857,7 @@ fn host(view: &View, state: model!(DisplayState), metrics: Metrics) -> Entity {
 }
 
 #[compose]
-fn network_panel(view: &View, state: model!(DisplayState), metrics: Metrics) -> Entity {
-    let enabled = host_action_enabled(view);
-    let local = if view.local_address.is_empty() {
-        "等待分配地址".into()
-    } else {
-        format!("本机  {}", view.local_address)
-    };
-    let peers = view
-        .peers
-        .iter()
-        .map(|peer| format!("{}  {}", peer.name, peer.address))
-        .collect::<Vec<_>>()
-        .join("\n");
+fn network_panel(_view: &View, state: model!(DisplayState), metrics: Metrics) -> Entity {
     ui! {
         Column (grow: 1.0, min_height: 0, row_gap: metrics.gap) {
             Column (
@@ -697,9 +869,18 @@ fn network_panel(view: &View, state: model!(DisplayState), metrics: Metrics) -> 
                 row_gap: metrics.gap
             ) {
                 live_label (state, Headline, metrics.title, FOREGROUND, Center)
-                label (&local, metrics.body, SECONDARY, Center)
                 Text (
-                    peers,
+                    text: ${ state.address() },
+                    font: FONT,
+                    font_size: metrics.body,
+                    text_color: SECONDARY,
+                    height: Dimension::Content,
+                    paragraph: paragraph(Center, 1)
+                ) [
+                    FONT_PAINT,
+                ]
+                Text (
+                    text: ${ state.peers() },
                     width: Dimension::percent(100),
                     min_width: 0,
                     height: Dimension::Content,
@@ -708,23 +889,25 @@ fn network_panel(view: &View, state: model!(DisplayState), metrics: Metrics) -> 
                     text_color: SECONDARY,
                     paragraph: paragraph(Center, 3),
                     clip_children: true
-                )
+                ) [
+                    FONT_PAINT,
+                ]
                 live_label (state, Next, metrics.small, SECONDARY, Center)
             }
             Column (
-                id: "focus_host",
                 height: if metrics.compact { 34 } else { 50 },
                 shrink: 0.0,
-                bg_color: if enabled { ACCENT } else { PANEL },
+                bg_color: ${ if state.enabled() { ACCENT } else { PANEL } },
                 justify: JustifyContent::Center
             ) [
-                FocusTarget,
+                Section::FocusHost,
+                FocusTarget { index: 0 },
             ] {
                 live_label (
                     state,
                     HostButton,
                     metrics.title,
-                    if enabled { BACKGROUND } else { DISABLED },
+                    BACKGROUND,
                     Center
                 )
             }
@@ -754,22 +937,31 @@ fn room_signal(strength: u8, available: bool) -> Entity {
 }
 
 #[compose]
-fn rooms(view: &View, metrics: Metrics) -> Entity {
-    let first = view
-        .selected
-        .saturating_sub(3)
-        .min(view.rooms.len().saturating_sub(4));
+fn rooms(state: model!(DisplayState), metrics: Metrics) -> Entity {
+    ui! {
+        Column (grow: 1.0, min_height: 0) {
+            match ${ state.rooms() } {
+                rows => {
+                    room_rows (&rows, metrics)
+                }
+            }
+        }
+    }
+}
+
+#[compose]
+fn room_rows(rows: &[(usize, crate::model::RoomRow)], metrics: Metrics) -> Entity {
     ui! {
         Column (
-            id: "focus_list",
             grow: 1.0,
             min_height: 0,
             row_gap: metrics.gap
         ) [
+            Section::FocusList,
             StaticCache,
             OffscreenRender::default(),
         ] {
-            if view.rooms.is_empty() {
+            if rows.is_empty() {
                 Column (
                     grow: 1.0,
                     bg_color: PANEL,
@@ -791,10 +983,12 @@ fn rooms(view: &View, metrics: Metrics) -> Entity {
                         font_size: metrics.small,
                         text_color: SECONDARY,
                         paragraph: paragraph(Center, 2)
-                    )
+                    ) [
+                        FONT_PAINT,
+                    ]
                 }
             } else {
-                walk view.rooms.iter().enumerate().skip(first).take(4) with item {
+                walk rows.iter() with item {
                     Row (
                         grow: 1.0,
                         min_height: i32::from(metrics.row_title + metrics.row_detail) + 17,
@@ -805,7 +999,7 @@ fn rooms(view: &View, metrics: Metrics) -> Entity {
                         align: AlignItems::Center,
                         clip_children: true
                     ) [
-                        FocusTarget,
+                        FocusTarget { index: item.0 },
                     ] {
                         Column (
                             grow: 1.0,
@@ -845,18 +1039,31 @@ fn rooms(view: &View, metrics: Metrics) -> Entity {
 }
 
 #[compose]
-fn games(view: &View, metrics: Metrics) -> Entity {
+fn games(state: model!(DisplayState), metrics: Metrics) -> Entity {
+    ui! {
+        Column (grow: 1.0, min_height: 0) {
+            match ${ state.entries() } {
+                rows => {
+                    game_rows (&rows, metrics)
+                }
+            }
+        }
+    }
+}
+
+#[compose]
+fn game_rows(rows: &[crate::model::GameRow], metrics: Metrics) -> Entity {
     ui! {
         Column (
-            id: "focus_list",
             grow: 1.0,
             min_height: 0,
             row_gap: metrics.gap
         ) [
+            Section::FocusList,
             StaticCache,
             OffscreenRender::default(),
         ] {
-            if view.entries.is_empty() {
+            if rows.is_empty() {
                 Column (
                     grow: 1.0,
                     bg_color: PANEL,
@@ -871,7 +1078,7 @@ fn games(view: &View, metrics: Metrics) -> Entity {
                     )
                 }
             } else {
-                walk view.entries.iter().take(4).enumerate() with item {
+                walk rows.iter().enumerate() with item {
                     Row (
                         grow: 1.0,
                         min_height: i32::from(metrics.row_title + metrics.row_detail) + 17,
@@ -882,7 +1089,7 @@ fn games(view: &View, metrics: Metrics) -> Entity {
                         align: AlignItems::Center,
                         clip_children: true
                     ) [
-                        FocusTarget,
+                        FocusTarget { index: item.0 },
                     ] {
                         Text (
                             if item.1.directory { ">" } else { "·" },
@@ -893,7 +1100,9 @@ fn games(view: &View, metrics: Metrics) -> Entity {
                             font_size: metrics.title,
                             text_color: ACCENT,
                             paragraph: paragraph(Center, 1)
-                        )
+                        ) [
+                            FONT_PAINT,
+                        ]
                         Column (
                             grow: 1.0,
                             min_width: 0,
@@ -924,7 +1133,7 @@ fn games(view: &View, metrics: Metrics) -> Entity {
 }
 
 #[compose]
-fn joined(view: &View, state: model!(DisplayState), metrics: Metrics) -> Entity {
+fn joined(_view: &View, state: model!(DisplayState), metrics: Metrics) -> Entity {
     ui! {
         Column (
             grow: 1.0,
@@ -956,7 +1165,9 @@ fn joined(view: &View, state: model!(DisplayState), metrics: Metrics) -> Entity 
                             font_size: metrics.small,
                             text_color: ${ state.steps()[step.0].foreground },
                             paragraph: paragraph(Center, 1)
-                        )
+                        ) [
+                            FONT_PAINT,
+                        ]
                         label (
                             step.1,
                             metrics.small,
@@ -985,13 +1196,17 @@ fn joined(view: &View, state: model!(DisplayState), metrics: Metrics) -> Entity 
                 SECONDARY,
                 Center
             )
-            if !view.room_name.is_empty() {
-                label (
-                    &view.room_name,
-                    metrics.small,
-                    SECONDARY,
-                    Center
-                )
+            if ${ !state.room_name().is_empty() } {
+                Text (
+                    text: ${ state.room_name() },
+                    font: FONT,
+                    font_size: metrics.small,
+                    text_color: SECONDARY,
+                    height: Dimension::Content,
+                    paragraph: paragraph(Center, 1)
+                ) [
+                    FONT_PAINT,
+                ]
             }
         }
     }
@@ -1018,7 +1233,9 @@ fn leaving(state: model!(DisplayState), metrics: Metrics) -> Entity {
                 font_size: metrics.title,
                 text_color: ACCENT,
                 paragraph: paragraph(Center, 1)
-            )
+            ) [
+                FONT_PAINT,
+            ]
             live_label (
                 state,
                 Headline,
@@ -1061,7 +1278,9 @@ fn unavailable(metrics: Metrics) -> Entity {
                 font_size: metrics.title,
                 text_color: WARNING,
                 paragraph: paragraph(Center, 1)
-            )
+            ) [
+                FONT_PAINT,
+            ]
             label (
                 "暂时无法进行联机",
                 metrics.title,
@@ -1078,9 +1297,8 @@ fn unavailable(metrics: Metrics) -> Entity {
     }
 }
 
-#[compose]
-fn page(view: &View, state: model!(DisplayState), metrics: Metrics) -> Entity {
-    let heading = match view.page {
+fn page_heading(view: &View) -> &str {
+    match view.page {
         Page::Mode => "选择连接方式",
         Page::Choice if view.network_only => "和好友建立局域网",
         Page::Choice => "和好友一起，开始游戏",
@@ -1096,41 +1314,47 @@ fn page(view: &View, state: model!(DisplayState), metrics: Metrics) -> Entity {
         Page::Joined => "加入房间",
         Page::Leaving => "退出联机",
         Page::Unavailable => "附近联机",
-    };
+    }
+}
+
+#[compose]
+fn page(view: &View, state: model!(DisplayState), metrics: Metrics) -> Entity {
     ui! {
         Column (
-            id: "nearby_shell",
             grow: 1.0,
             min_width: 0,
             min_height: 0,
             bg_color: BACKGROUND,
-            padding: @(id(nearby_shell).height) { Padding::all(if nearby_shell.height < Fixed::from_int(400) { 8 } else { 24 }) },
-            row_gap: metrics.gap,
-        ) {
+            padding: Padding::all(if metrics.compact { 8 } else { 24 }),
+            row_gap: metrics.gap
+        ) [
+            Section::Shell,
+        ] {
             header (
                 view,
                 state,
-                metrics,
+                metrics
             )
             View (
                 height: 1,
                 shrink: 0.0,
-                bg_color: DIVIDER,
+                bg_color: DIVIDER
             )
             Column (
-                id: "nearby_content",
                 grow: 1.0,
                 min_height: 0,
-                row_gap: metrics.gap,
-            ) {
+                row_gap: metrics.gap
+            ) [
+                Section::Content,
+            ] {
                 Row (
                     height: i32::from(metrics.title) + 8,
                     shrink: 0.0,
                     align: AlignItems::Center,
-                    column_gap: metrics.gap,
+                    column_gap: metrics.gap
                 ) {
                     Text (
-                        heading.to_owned(),
+                        text: ${ state.heading() },
                         grow: 1.0,
                         min_width: 0,
                         height: Dimension::Content,
@@ -1138,25 +1362,26 @@ fn page(view: &View, state: model!(DisplayState), metrics: Metrics) -> Entity {
                         font: FONT,
                         font_size: metrics.title,
                         text_color: FOREGROUND,
-                        paragraph: paragraph(Start, 1),
-                    )
+                        paragraph: paragraph(Start, 1)
+                    ) [
+                        FONT_PAINT,
+                    ]
                     Row (
                         width: 36,
                         shrink: 0.0,
                         align: AlignItems::Center,
-                        justify: JustifyContent::SpaceBetween,
+                        justify: JustifyContent::SpaceBetween
                     ) {
                         walk 0_usize..3 with index {
                             View (
                                 width: 6,
                                 height: 6,
-                                bg_color: ${state.activity()[index]},
+                                bg_color: ${ state.activity()[index] }
                             )
                         }
                     }
                 }
                 Text (
-                    id: "nearby_status",
                     text: ${ state.status() },
                     height: Dimension::Content,
                     min_height: i32::from(metrics.small) + 6,
@@ -1167,153 +1392,131 @@ fn page(view: &View, state: model!(DisplayState), metrics: Metrics) -> Entity {
                     font_size: metrics.small,
                     text_color: SECONDARY,
                     paragraph: paragraph(Start, 2),
-                    clip_children: true,
-                )
+                    clip_children: true
+                ) [
+                    FONT_PAINT,
+                    Section::Status,
+                ]
                 if view.network_only && matches!(view.page, Page::Host | Page::Joined) {
-                    network_panel(view, state, metrics)
-                } else { match view.page {
-                    Page::Choice | Page::Mode => { choice(view, metrics) }
-                    Page::Host => { host(view, state, metrics) }
-                    Page::Rooms => { rooms(view, metrics) }
-                    Page::Joined => { joined(view, state, metrics) }
-                    Page::Leaving => { leaving(state, metrics) }
-                    Page::Unavailable => { unavailable(metrics) }
-                    Page::Games => { games(view, metrics) }
-                } }
+                    network_panel (view, state, metrics)
+                } else {
+                    match view.page {
+                        Page :: Choice | Page :: Mode => {
+                            choice (view, metrics)
+                        }
+                        Page :: Host => {
+                            host (view, state, metrics)
+                        }
+                        Page :: Rooms => {
+                            rooms (state, metrics)
+                        }
+                        Page :: Joined => {
+                            joined (view, state, metrics)
+                        }
+                        Page :: Leaving => {
+                            leaving (state, metrics)
+                        }
+                        Page :: Unavailable => {
+                            unavailable (metrics)
+                        }
+                        Page :: Games => {
+                            games (state, metrics)
+                        }
+                    }
+                }
             }
             View (
                 height: 1,
                 shrink: 0.0,
-                bg_color: DIVIDER,
+                bg_color: DIVIDER
             )
             footer (
                 view,
                 state,
-                metrics,
+                metrics
             )
         }
     }
 }
 
 pub struct Scene {
-    pub focus_rect: Option<[i32; 4]>,
     pub loading: bool,
     state: DisplayHandle,
 }
 
 impl Scene {
+    #[cfg(any(target_os = "linux", test))]
+    pub fn navigation_intent(&self, backward: bool) {
+        if backward {
+            self.state.navigate_back();
+        } else {
+            self.state.navigate_forward();
+        }
+    }
+
     pub fn feedback(&self, stamp: Color, activity: [Color; 3]) {
         self.state.feedback(stamp, activity);
     }
 }
 
-#[component]
-struct FocusOverlay;
-
-struct FocusGeometry(Option<[i32; 4]>);
-
-#[view(component = FocusOverlay, name = "nearby_focus", priority = 90)]
-fn paint_focus(geometry: res!(FocusGeometry), paint: paint!()) {
-    let Some([x, y, width, height]) = geometry.0 else {
-        return;
-    };
-    for [left, top, w, h] in [
-        [x, y, width, 2],
-        [x, y + height - 2, width, 2],
-        [x, y + 2, 2, height - 4],
-        [x + width - 2, y + 2, 2, height - 4],
-    ] {
-        paint.draw(&DrawCommand::Fill {
-            area: Rect::new(left, top, w, h),
-            transform: paint.transform(),
-            quad: None,
-            color: ACCENT,
-            radius: Fixed::ZERO,
-            opa: 255,
-        });
+#[event]
+fn create_page(
+    event: event!(CreatePage<PageKey>),
+    state: model!(DisplayState),
+    metrics: Metrics,
+) -> Entity {
+    let mut snapshot = state.snapshot();
+    snapshot.page = event.route().page;
+    snapshot.network_only = event.route().network_only;
+    ui! {
+        mounted_page (&snapshot, state, metrics)
     }
 }
 
 #[compose]
-fn focus_overlay() -> Entity {
+fn mounted_page(view: &View, state: model!(DisplayState), metrics: Metrics) -> Entity {
+    ui! {
+        Column (grow: 1.0, min_height: 0, bg_color: BACKGROUND, clip_children: true) {
+            page_contents (view, state, metrics)
+        }
+    }
+}
+
+#[compose]
+fn page_contents(view: &View, state: model!(DisplayState), metrics: Metrics) -> Entity {
+    let body = ui! {
+        page (view, state, metrics)
+    };
     ui! {
         View (
             position: Position::Absolute,
-            left: 0,
-            top: 0,
-            width: Dimension::percent(100),
-            height: Dimension::percent(100)
+            width: 0,
+            height: 0,
+            border_color: ACCENT,
+            border_width: 2
         ) [
-            FocusOverlay,
+            mirui::ui::IgnoreHitTest,
+            selection::SelectionFrame {
+                body,
+                page: state.page_key(),
+                state: state.clone(),
+            },
         ]
     }
 }
 
 #[compose]
-fn replace_focus(next: Option<[i32; 4]>) -> Option<[i32; 4]> {
-    res!(mut FocusGeometry).with(|geometry| std::mem::replace(&mut geometry.0, next))
-}
-
-pub fn move_focus<B: FramebufferAccess>(app: &mut App<B>, next: Option<[i32; 4]>) {
-    let Some(root) = app.root else { return };
-    let previous = app.compose(root, replace_focus(next));
-    if previous == next {
-        return;
+fn shell(state: model!(DisplayState), metrics: Metrics) -> Entity {
+    ui! {
+        PageView (
+            id: "nearby_pages",
+            grow: 1.0,
+            min_height: 0,
+            bg_color: BACKGROUND,
+            page: ${ state.page_key() },
+            transition: ${ state.transition() }
+        ) on CreatePage(create_page::callback(state, metrics))
     }
-    let (Some(old), Some(next)) = (previous, next) else {
-        if let Some(rect) = previous.or(next) {
-            for [x, y, w, h] in border_bands(rect) {
-                app.invalidate_rect(Rect::new(x, y, w, h));
-            }
-        }
-        return;
-    };
-    let dx = (next[0] - old[0]).abs();
-    let dy = (next[1] - old[1]).abs();
-    let x = old[0].min(next[0]);
-    let y = old[1].min(next[1]);
-    let width = old[2] + dx;
-    let height = old[3] + dy;
-    let same_size = old[2..] == next[2..];
-    let regions = if same_size && dy == 0 && dx < old[2] - 4 {
-        let band = dx + 2;
-        Some([
-            [x, y, band, height],
-            [x + width - band, y, band, height],
-            [x + band, y, width - 2 * band, 2],
-            [x + band, y + height - 2, width - 2 * band, 2],
-        ])
-    } else if same_size && dx == 0 && dy < old[3] - 4 {
-        let band = dy + 2;
-        Some([
-            [x, y, width, band],
-            [x, y + height - band, width, band],
-            [x, y + band, 2, height - 2 * band],
-            [x + width - 2, y + band, 2, height - 2 * band],
-        ])
-    } else {
-        None
-    };
-    if let Some(regions) = regions {
-        for [left, top, w, h] in regions {
-            app.invalidate_rect(Rect::new(left, top, w, h));
-        }
-    } else {
-        for [left, top, w, h] in border_bands(old).into_iter().chain(border_bands(next)) {
-            if w > 0 && h > 0 {
-                app.invalidate_rect(Rect::new(left, top, w, h));
-            }
-        }
-    }
-}
-
-fn border_bands([x, y, width, height]: [i32; 4]) -> [[i32; 4]; 4] {
-    [
-        [x, y, width, 2],
-        [x, y + height - 2, width, 2],
-        [x, y + 2, 2, height - 4],
-        [x + width - 2, y + 2, 2, height - 4],
-    ]
 }
 
 fn loading(view: &View) -> bool {
@@ -1521,120 +1724,23 @@ fn confirm_text(view: &View) -> &str {
     }
 }
 
-fn scene_key(view: &View) -> View {
-    let mut key = view.clone();
-    key.status.clear();
-    key.refreshing = false;
-    key.phase = Phase::Idle;
-    key.back_label.clear();
-    match view.page {
-        Page::Choice | Page::Mode => {
-            key.selected = 0;
-            key.busy = false;
-            key.room_name.clear();
-        }
-        Page::Rooms => {
-            key.selected = view
-                .selected
-                .saturating_sub(3)
-                .min(view.rooms.len().saturating_sub(4));
-            key.busy = false;
-            key.room_name.clear();
-            for room in &mut key.rooms {
-                room.signal = [0, 25, 50, 75]
-                    .into_iter()
-                    .filter(|threshold| room.signal > *threshold)
-                    .count() as u8;
-            }
-        }
-        Page::Games => {
-            key.selected = 0;
-            key.busy = false;
-        }
-        Page::Host => {
-            key.ready = view.ready;
-            key.busy = host_action_enabled(view);
-        }
-        Page::Joined | Page::Leaving => {
-            key.busy = view.network_only && host_action_enabled(view);
-            key.ready = false;
-        }
-        _ => {}
-    }
-    key
-}
-
-pub fn can_update(previous: &View, next: &View) -> bool {
-    scene_key(previous) == scene_key(next)
-}
-
-#[compose]
-fn focus_rect(view: &View) -> Option<[i32; 4]> {
-    let slot = match view.page {
-        Page::Choice | Page::Mode => view.selected.min(1),
-        Page::Rooms if !view.rooms.is_empty() => view
-            .selected
-            .saturating_sub(
-                view.selected
-                    .saturating_sub(3)
-                    .min(view.rooms.len().saturating_sub(4)),
-            )
-            .min(3),
-        Page::Games if !view.entries.is_empty() => view.selected.min(3),
-        Page::Host if host_action_enabled(view) => 0,
-        Page::Joined if view.network_only && host_action_enabled(view) => 0,
-        _ => return None,
-    };
-    let parent = res!(IdMap).with(|ids| {
-        ids.get(
-            if view.page == Page::Host || view.network_only && view.page == Page::Joined {
-                "focus_host"
-            } else {
-                "focus_list"
-            },
-        )
-    })?;
-    let entity = if view.page == Page::Host || view.network_only && view.page == Page::Joined {
-        parent
-    } else {
-        let children = com!(parent, Children)?.0.clone();
-        children
-            .into_iter()
-            .filter(|entity| com!(*entity, FocusTarget).is_some())
-            .nth(slot)?
-    };
-    let rect = com!(entity, ComputedRect)?.0;
-    Some([
-        rect.x.to_int(),
-        rect.y.to_int(),
-        rect.w.to_int(),
-        rect.h.to_int(),
-    ])
-}
-
 #[compose]
 fn display_state() -> DisplayHandle {
     res!(DisplayRuntime).with(|runtime| runtime.state.clone())
 }
 
-pub fn update<B: FramebufferAccess>(
-    app: &mut App<B>,
-    scene: &mut Scene,
-    view: &View,
-) -> Result<(), String> {
+pub fn update(scene: &mut Scene, view: &View) -> Result<(), String> {
     scene.state.present(view);
     scene.loading = loading(view);
-    app.prepare_layout()
-        .map_err(|error| format!("Menu layout: {error:?}"))?;
-    scene.focus_rect = app
-        .root
-        .and_then(|root| app.compose(root, focus_rect(view)));
+
     Ok(())
 }
 
 pub fn build<B: FramebufferAccess>(app: &mut App<B>, view: &View) -> Result<Scene, String> {
-    app.clear_root();
-    let root = app.spawn_root().bg_color(BACKGROUND).id();
+    let root = match app.root {
+        Some(root) => root,
+        None => app.spawn_root().bg_color(BACKGROUND).id(),
+    };
     let state = app.compose(root, display_state());
     state.present(view);
     state.feedback(
@@ -1645,18 +1751,19 @@ pub fn build<B: FramebufferAccess>(app: &mut App<B>, view: &View) -> Result<Scen
             BACKGROUND
         }; 3],
     );
-    let metrics = Metrics::for_height(app.backend.viewport().logical_size().1);
-    app.compose(root, page(view, state.clone(), metrics));
-    app.compose(root, focus_overlay());
-    app.prepare_layout()
-        .map_err(|error| format!("Menu layout: {error:?}"))?;
-    let scene = Scene {
-        focus_rect: app.compose(root, focus_rect(view)),
+    if !app.compose(root, has_pages()) {
+        let metrics = Metrics::for_height(app.backend.viewport().logical_size().1);
+        app.compose(root, shell(state.clone(), metrics));
+    }
+    Ok(Scene {
         loading: loading(view),
         state,
-    };
-    app.compose(root, replace_focus(scene.focus_rect));
-    Ok(scene)
+    })
+}
+
+#[compose]
+fn has_pages() -> bool {
+    res!(mirui::ui::IdMap).with(|ids| ids.get("nearby_pages").is_some())
 }
 
 pub fn draw<B: FramebufferAccess>(app: &mut App<B>, view: &View) -> Result<Scene, String> {

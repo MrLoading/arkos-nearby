@@ -100,7 +100,7 @@ impl Bundle {
             manifest.schema == 1
                 && manifest.profile == PROFILE
                 && manifest.kernel_sha256 == KERNEL_SHA
-                && manifest.gui_version == "0.48.0"
+                && manifest.gui_version == "0.49.0"
                 && !manifest.version.is_empty(),
             "Unsupported release profile",
         )?;
@@ -175,15 +175,27 @@ mod tests {
                 Sha256::digest(include_bytes!("../../../gui/nearby/Cargo.lock"))
             )
         );
-        assert_eq!(
-            report["mirui_patch_sha256"],
-            format!(
-                "{:x}",
-                Sha256::digest(include_bytes!(
-                    "../../../gui/nearby/patches/mirui-0.48.0.patch"
-                ))
-            )
-        );
+        let lock = include_str!("../../../gui/nearby/Cargo.lock");
+        for (name, field) in [
+            ("mirui", "mirui_crate_sha256"),
+            ("mirui-macros", "mirui_macros_crate_sha256"),
+            ("mirx", "mirx_crate_sha256"),
+        ] {
+            let package = lock
+                .split("[[package]]")
+                .find(|package| {
+                    package
+                        .lines()
+                        .any(|line| line == format!("name = \"{name}\""))
+                })
+                .unwrap();
+            let checksum = package
+                .lines()
+                .find_map(|line| line.strip_prefix("checksum = \""))
+                .unwrap()
+                .trim_end_matches('"');
+            assert_eq!(report[field], checksum);
+        }
         let sources: serde_json::Value =
             serde_json::from_slice(bundle.bytes(asset("release-sources.json"))).unwrap();
         for (field, report_field) in [
@@ -193,8 +205,8 @@ mod tests {
             ("source_sha256", "source_sha256"),
             ("cargo_lock_sha256", "cargo_lock_sha256"),
             ("mirui_crate_sha256", "mirui_crate_sha256"),
-            ("mirui_patch_sha256", "mirui_patch_sha256"),
-            ("effective_cargo_lock_sha256", "effective_cargo_lock_sha256"),
+            ("mirui_macros_crate_sha256", "mirui_macros_crate_sha256"),
+            ("mirx_crate_sha256", "mirx_crate_sha256"),
         ] {
             assert!(report[report_field].as_str().is_some());
             assert_eq!(sources["renderer"][field], report[report_field]);

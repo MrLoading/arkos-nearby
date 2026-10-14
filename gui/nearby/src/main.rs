@@ -1,5 +1,5 @@
+mod feedback;
 mod model;
-mod motion;
 #[cfg(target_os = "linux")]
 mod platform;
 mod render;
@@ -101,8 +101,7 @@ fn snapshot(
     render::install_fonts(&mut app)?;
     let scene = render::draw(&mut app, &view)?;
     if let Some(now) = time_ms {
-        let mut motion = motion::Motion::default();
-        motion.retarget(&view.page, scene.focus_rect, 0);
+        let mut motion = feedback::Feedback::default();
         motion.press(0);
         motion.paint(&mut app, &scene, now)?;
     }
@@ -148,19 +147,16 @@ fn benchmark() -> Result<(), String> {
         let start = Instant::now();
         let mut scene = render::draw(&mut app, &view)?;
         let full_ms = start.elapsed().as_secs_f64() * 1000.0;
-        let mut motion = motion::Motion::default();
-        motion.retarget(&view.page, scene.focus_rect, 0);
+        let mut motion = feedback::Feedback::default();
         let mut timing = Timings::default();
         let mut pixels = Timings::default();
         for frame in 0..120 {
             let now = (frame * FRAME_INTERVAL.as_nanos() / 1_000_000) as u64;
             *damage.borrow_mut() = 0;
             let start = Instant::now();
-            let previous = view.clone();
             if matches!(name, "focus" | "room_focus") && frame % 15 == 0 {
                 view.selected = 1 - view.selected;
-                render::update(&mut app, &mut scene, &view)?;
-                motion.retarget(&view.page, scene.focus_rect, now);
+                render::update(&mut scene, &view)?;
             }
             if name == "status" {
                 view.status = if frame % 2 == 0 {
@@ -169,14 +165,9 @@ fn benchmark() -> Result<(), String> {
                     "等待好友准备"
                 }
                 .into();
-                render::update(&mut app, &mut scene, &view)?;
+                render::update(&mut scene, &view)?;
             }
-            if !render::can_update(&previous, &view) {
-                return Err("Benchmark updates must retain their scene".into());
-            }
-            if motion.active(&scene, now) {
-                motion.paint(&mut app, &scene, now)?;
-            }
+            motion.paint(&mut app, &scene, now)?;
             let elapsed = start.elapsed().as_secs_f64() * 1000.0;
             timing.add(elapsed);
             pixels.add(f64::from(*damage.borrow()));
@@ -251,14 +242,14 @@ fn live() -> Result<(), String> {
     platform::record_init("before_fonts", serde_json::json!({}))
         .map_err(|error| error.to_string())?;
     render::install_fonts(&mut app)?;
+    app.add_plugin(mirui::app::plugins::StdInstantClockPlugin);
     platform::record_init("after_fonts", serde_json::json!({}))
         .map_err(|error| error.to_string())?;
     let mut view: Option<model::View> = None;
     let mut scene = None;
-    let mut motion = motion::Motion::default();
+    let mut motion = feedback::Feedback::default();
     let epoch = Instant::now();
     let mut next_frame = Instant::now();
-    let mut was_active = false;
     let mut first_frame_sent = false;
     let mut metrics = FrameMetrics::default();
     while !quit.load(Ordering::Relaxed) {
@@ -273,32 +264,13 @@ fn live() -> Result<(), String> {
         if let Some(latest) = latest {
             if view.as_ref() != Some(&latest) {
                 let frame_start = Instant::now();
-                let full;
-                if view
-                    .as_ref()
-                    .is_some_and(|old| render::can_update(old, &latest))
-                    && let Some(current_scene) = scene.as_mut()
-                {
-                    full = false;
-                    render::update(&mut app, current_scene, &latest)?;
-                    motion.retarget(
-                        &latest.page,
-                        current_scene.focus_rect,
-                        epoch.elapsed().as_millis() as u64,
-                    );
+                let full = scene.is_none();
+                if let Some(current_scene) = scene.as_mut() {
+                    render::update(current_scene, &latest)?;
                     motion.paint(&mut app, current_scene, epoch.elapsed().as_millis() as u64)?;
-                    if let Some(error) = flush_error.borrow_mut().take() {
-                        return Err(format!("Framebuffer pwrite: {error}"));
-                    }
                 } else {
-                    full = true;
                     let next_scene = render::build(&mut app, &latest)?;
-                    motion.retarget(
-                        &latest.page,
-                        next_scene.focus_rect,
-                        epoch.elapsed().as_millis() as u64,
-                    );
-                    motion.apply(&mut app, &next_scene, epoch.elapsed().as_millis() as u64)?;
+                    motion.apply(&next_scene, epoch.elapsed().as_millis() as u64);
                     app.render()
                         .map_err(|error| format!("Menu frame: {error:?}"))?;
                     scene = Some(next_scene);
@@ -323,8 +295,7 @@ fn live() -> Result<(), String> {
         }
         if let Some(scene) = scene.as_ref() {
             let now = epoch.elapsed().as_millis() as u64;
-            let active = motion.active(scene, now);
-            if (active || was_active) && Instant::now() >= next_frame {
+            if Instant::now() >= next_frame {
                 let frame_start = Instant::now();
                 next_frame = frame_start + FRAME_INTERVAL;
                 motion.paint(&mut app, scene, now)?;
@@ -332,13 +303,16 @@ fn live() -> Result<(), String> {
                 if let Some(error) = flush_error.borrow_mut().take() {
                     return Err(format!("Framebuffer pwrite: {error}"));
                 }
-                was_active = active;
-            }
-            if !active && !was_active {
-                metrics.previous = None;
             }
         }
         for action in terminal.poll().map_err(|e| e.to_string())? {
+            if let Some(scene) = scene.as_ref() {
+                match action {
+                    model::Action::Back => scene.navigation_intent(true),
+                    model::Action::Confirm => scene.navigation_intent(false),
+                    _ => {}
+                }
+            }
             if matches!(action, model::Action::Confirm | model::Action::Refresh) {
                 motion.press(epoch.elapsed().as_millis() as u64);
             }
@@ -347,16 +321,9 @@ fn live() -> Result<(), String> {
             writeln!(output).map_err(|e| e.to_string())?;
             output.flush().map_err(|e| e.to_string())?;
         }
-        let active = scene
-            .as_ref()
-            .is_some_and(|current| motion.active(current, epoch.elapsed().as_millis() as u64));
-        let sleep = if active || was_active {
-            next_frame
-                .saturating_duration_since(Instant::now())
-                .min(Duration::from_millis(2))
-        } else {
-            Duration::from_millis(8)
-        };
+        let sleep = next_frame
+            .saturating_duration_since(Instant::now())
+            .min(Duration::from_millis(2));
         if !sleep.is_zero() {
             thread::sleep(sleep);
         }
@@ -368,7 +335,7 @@ fn run() -> Result<(), String> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.as_slice() {
         [argument] if argument == "--version" => {
-            println!("arkos-nearby-gui 0.1.0 (mirui 0.48.0)");
+            println!("arkos-nearby-gui 0.1.0 (mirui 0.49.0)");
             Ok(())
         }
         #[cfg(target_os = "linux")]

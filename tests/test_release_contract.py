@@ -48,28 +48,35 @@ class ReleaseContract(unittest.TestCase):
             self.assertIn(entry["mode"], (0o644, 0o755))
             seen.add(entry["name"])
             offset += entry["size"]
-        self.assertEqual(manifest["gui_version"], gui.locked_dependencies()["mirui"])
-
-    def test_renderer_sources_and_licenses_match_the_locked_dependencies(self):
-        versions = gui.locked_dependencies()
         source = json.loads((ROOT / "release/release-sources.json").read_text())[
             "renderer"
         ]
-        self.assertEqual(source["version"], versions["mirui"])
-        self.assertEqual(source["mirx_version"], versions["mirx"])
-        self.assertEqual(source["source_sha256"], gui.source_sha256())
-        for name, value in gui.patch_record()[1].items():
-            self.assertEqual(source[name], value)
-        lock = ROOT / "gui/nearby/Cargo.lock"
-        self.assertEqual(
-            source["cargo_lock_sha256"], hashlib.sha256(lock.read_bytes()).hexdigest()
-        )
+        self.assertEqual(manifest["gui_version"], source["version"])
+
+    def test_released_renderer_matches_its_asset_record(self):
+        source = json.loads((ROOT / "release/release-sources.json").read_text())[
+            "renderer"
+        ]
         manifest = json.loads((ROOT / "release/manifest.json").read_text())
         renderer = next(
             entry for entry in manifest["files"] if entry["name"] == "arkos-nearby-gui"
         )
         self.assertEqual(source["sha256"], renderer["sha256"])
+        packages = json.loads((ROOT / "release/rust-dependencies.json").read_text())
+        self.assertTrue(
+            any(
+                p["name"] == "mirui" and p["version"] == source["version"]
+                for p in packages
+            )
+        )
+
+    def test_current_gui_artifacts_and_licenses_match_the_locked_dependencies(self):
+        files = gui.artifacts(ROOT / "build/assets")
+        report = json.loads(files["nearby-gui-build.json"])
+        for name, value in gui.build_inputs().items():
+            self.assertEqual(report[name], value)
         dependencies = json.loads((ROOT / "release/rust-dependencies.json").read_text())
+        lock = ROOT / "gui/nearby/Cargo.lock"
         for package in tomllib.loads(lock.read_text())["package"]:
             if package["name"] not in {"mirui", "mirui-macros", "mirx"}:
                 continue
@@ -83,6 +90,7 @@ class ReleaseContract(unittest.TestCase):
             record = records[0]
             self.assertEqual(record["checksum"], package["checksum"])
             self.assertTrue(record["included"])
+            self.assertTrue(record["license_files"])
             for name in record["license_files"]:
                 path = Path(name)
                 self.assertFalse(path.is_absolute())

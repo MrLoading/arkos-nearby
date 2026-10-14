@@ -1,20 +1,87 @@
 use super::*;
+use crate::feedback::Feedback;
 use crate::model::{GameRow, RoomRow};
-use crate::motion::Motion;
 use mirui::core::model::ModelHandle;
 use mirui::render::texture::ColorFormat;
 use mirui::surface::framebuf::FramebufSurface;
 use mirui::types::PhysicalRect;
+use mirui::ui::ComputedRect;
 use mirui::ui::OffscreenGeneration;
 use mirui::ui::render_system::LastDirtyRegions;
+use mirui::ui::widgets::FollowBounds;
 use std::cell::Cell;
 
 type TestApp = App<FramebufSurface<fn(&[u8], PhysicalRect)>>;
+
+thread_local! { static TIME: Cell<u64> = const { Cell::new(0) }; }
+
+fn now_ns() -> u64 {
+    TIME.with(Cell::get)
+}
+
+fn body(app: &TestApp) -> Entity {
+    app.world
+        .query::<selection::SelectionFrame>()
+        .iter()
+        .find(|(_, frame)| frame.page == frame.state.page_key())
+        .unwrap()
+        .1
+        .body
+}
+
+fn focus_rect(app: &TestApp) -> Option<[i32; 4]> {
+    let (entity, _) = app
+        .world
+        .query::<selection::SelectionFrame>()
+        .iter()
+        .find(|(_, frame)| frame.page == frame.state.page_key())?;
+    let target = app.world.get::<FollowBounds>(entity)?.target;
+    let rect = app.world.get::<ComputedRect>(target)?.0;
+    Some([
+        rect.x.to_int(),
+        rect.y.to_int(),
+        rect.w.to_int(),
+        rect.h.to_int(),
+    ])
+}
+
+fn paint_at<B: FramebufferAccess>(
+    app: &mut App<B>,
+    feedback: &mut Feedback,
+    scene: &Scene,
+    time: u64,
+) {
+    let mut current = now_ns() / 1_000_000;
+    while current < time {
+        current = (current + 16).min(time);
+        TIME.with(|clock| clock.set(current * 1_000_000));
+        feedback.paint(app, scene, current).unwrap();
+    }
+}
+
+fn offset_focus(app: &mut TestApp, axis: usize) {
+    let node = app
+        .world
+        .query::<selection::SelectionFrame>()
+        .iter()
+        .next()
+        .unwrap()
+        .0;
+    let bounds = app.world.get_mut::<FollowBounds>(node).unwrap();
+    bounds.transition = None;
+    if axis == 0 {
+        bounds.offset.x += Fixed::ONE;
+    } else {
+        bounds.offset.y += Fixed::ONE;
+    }
+}
 
 fn app(size: [u16; 2]) -> TestApp {
     let mut app = App::headless(size[0], size[1]);
     app.with_default_widgets().with_default_systems();
     install_fonts(&mut app).unwrap();
+    TIME.with(|clock| clock.set(0));
+    app.add_resource(mirui::ecs::MonoClock::new(now_ns));
     app
 }
 
@@ -44,9 +111,32 @@ fn view(page: Page) -> View {
     }
 }
 
+fn section(app: &TestApp, kind: Section) -> Entity {
+    let root = body(app);
+    app.world
+        .query::<Section>()
+        .iter()
+        .find(|(entity, section)| {
+            **section == kind
+                && selection::contains(root, *entity, |node| {
+                    app.world
+                        .get::<mirui::ui::Parent>(node)
+                        .map(|parent| parent.0)
+                })
+        })
+        .unwrap()
+        .0
+}
+
 fn rect(app: &TestApp, id: &'static str) -> Rect {
-    let entity = app.world.resource::<IdMap>().unwrap().get(id).unwrap();
-    app.world.get::<ComputedRect>(entity).unwrap().0
+    let kind = match id {
+        "nearby_header" => Section::Header,
+        "nearby_content" => Section::Content,
+        "nearby_footer" => Section::Footer,
+        "nearby_status" => Section::Status,
+        _ => panic!("unknown section"),
+    };
+    app.world.get::<ComputedRect>(section(app, kind)).unwrap().0
 }
 
 fn cache_generations(app: &TestApp) -> Vec<(Entity, u32)> {
@@ -89,31 +179,45 @@ fn dynamic_updates_preserve_static_caches_and_one_model_registration() {
         Page::Unavailable,
     ] {
         let mut app = app([640, 480]);
-        let initial = view(page.clone());
+        let initial = view(page);
         let mut scene = draw(&mut app, &initial).unwrap();
-        let registered = scene.state.access().clone();
+        let registered = scene.state.clone();
+        let identity = registered.read(|model| std::ptr::from_ref(model) as usize);
         let generations = cache_generations(&app);
         assert!(!generations.is_empty());
         let mut next = initial.clone();
         next.status = "正在准备".into();
-        assert!(can_update(&initial, &next));
-        update(&mut app, &mut scene, &next).unwrap();
-        let mut motion = Motion::default();
-        motion.retarget(&page, scene.focus_rect, 0);
-        motion.paint(&mut app, &scene, 70).unwrap();
+        update(&mut scene, &next).unwrap();
+        let mut motion = Feedback::default();
+
+        paint_at(&mut app, &mut motion, &scene, 70);
         assert_eq!(cache_generations(&app), generations, "{page:?}");
         let previous_root = app.root.unwrap();
-        let next_scene = draw(&mut app, &view(Page::Choice)).unwrap();
-        assert!(!app.world.is_alive(previous_root));
-        assert!(std::rc::Weak::ptr_eq(
-            &registered,
-            next_scene.state.access()
-        ));
+        let previous_page = body(&app);
+        let next_scene = draw(
+            &mut app,
+            &view(if page == Page::Choice {
+                Page::Mode
+            } else {
+                Page::Choice
+            }),
+        )
+        .unwrap();
+        paint_at(&mut app, &mut motion, &next_scene, 1500);
+        assert_eq!(app.root, Some(previous_root));
+        assert!(app.world.is_alive(previous_root));
+        assert!(!app.world.is_alive(previous_page));
+        assert_eq!(
+            identity,
+            next_scene
+                .state
+                .read(|model| std::ptr::from_ref(model) as usize)
+        );
         drop(scene);
         drop(next_scene);
         drop(app);
         assert!(
-            registered.upgrade().is_none(),
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| registered.status())).is_err(),
             "Model lifetime must end with its App"
         );
     }
@@ -125,28 +229,34 @@ fn text_fields_invalidate_their_own_bindings_and_old_page_bindings_are_released(
     let initial = view(Page::Choice);
     let mut scene = draw(&mut app, &initial).unwrap();
     let texts: Vec<_> = app.world.query::<Text>().iter().map(|(e, _)| e).collect();
-    let status_entity = app
-        .world
-        .resource::<IdMap>()
-        .unwrap()
-        .get("nearby_status")
-        .unwrap();
+    let status_entity = section(&app, Section::Status);
     let mut next = initial.clone();
     next.status = "准备完成".into();
-    update(&mut app, &mut scene, &next).unwrap();
+    update(&mut scene, &next).unwrap();
+    app.render_dirty().unwrap();
     assert_eq!(
         app.world
             .get::<Text>(status_entity)
             .unwrap()
-            .resolve(&app.world)
+            .resolve(app.world.resource())
             .as_ref(),
         "准备完成"
     );
-    app.clear_root();
+    scene.navigation_intent(false);
+    scene.state.present(&view(Page::Unavailable));
+    let mut feedback = Feedback::default();
+    paint_at(&mut app, &mut feedback, &scene, 1500);
     assert!(texts.iter().all(|e| !app.world.is_alive(*e)));
-    scene.state.present(&initial);
-    app.prepare_layout().unwrap();
-    assert!(app.world.query::<Text>().iter().next().is_none());
+    let next_texts: Vec<_> = app
+        .world
+        .query::<Text>()
+        .iter()
+        .map(|(entity, _)| entity)
+        .collect();
+    assert!(!next_texts.is_empty());
+    scene.state.present(&view(Page::Unavailable));
+    app.render_dirty().unwrap();
+    assert!(next_texts.iter().all(|e| app.world.is_alive(*e)));
 }
 
 #[test]
@@ -163,12 +273,12 @@ fn responsive_layout_keeps_focus_and_text_sections_inside_the_viewport() {
             Page::Unavailable,
         ] {
             let mut app = app(size);
-            let mut view = view(page.clone());
+            let mut view = view(page);
             view.ready = true;
             view.selected = 3;
             view.status = "正在核对两台设备的游戏和模拟核心，请稍候。Preparing the selected game and checking the connection before starting multiplayer.".into();
             view.title = "较长的游戏标题 / A long multiplayer game title that should fit its available space".into();
-            let scene = draw(&mut app, &view).unwrap();
+            let _scene = draw(&mut app, &view).unwrap();
             let header = rect(&app, "nearby_header");
             let body = rect(&app, "nearby_content");
             let footer = rect(&app, "nearby_footer");
@@ -192,7 +302,7 @@ fn responsive_layout_keeps_focus_and_text_sections_inside_the_viewport() {
                     }
                 }
             }
-            if let Some([x, y, w, h]) = scene.focus_rect {
+            if let Some([x, y, w, h]) = focus_rect(&app) {
                 assert!(w > 40 && h >= 26, "{size:?} {page:?}: {w}×{h}");
                 assert!(
                     x >= 0 && y >= 0 && x + w <= i32::from(size[0]) && y + h <= footer.y.to_int()
@@ -219,9 +329,9 @@ fn network_status_keeps_connection_actions_inside_the_viewport() {
                     address: format!("192.168.49.{}", index + 2),
                 })
                 .collect();
-            let scene = draw(&mut app, &view).unwrap();
+            let _scene = draw(&mut app, &view).unwrap();
             let footer = rect(&app, "nearby_footer");
-            let [x, y, w, h] = scene.focus_rect.unwrap();
+            let [x, y, w, h] = focus_rect(&app).unwrap();
             assert!(x >= 0 && y >= 0 && w > 40 && h >= 26);
             assert!(x + w <= i32::from(size[0]) && y + h <= footer.y.to_int());
             assert!(footer.y + footer.h <= Fixed::from_int(i32::from(size[1])));
@@ -235,11 +345,11 @@ fn reflow_and_reverse_retarget_match_complete_frames_at_every_viewport() {
     for size in [[480, 320], [640, 480], [800, 480]] {
         for page in [Page::Choice, Page::Rooms, Page::Games] {
             let mut app = app(size);
-            let mut view = view(page.clone());
+            let mut view = view(page);
             let mut scene = draw(&mut app, &view).unwrap();
-            let original = scene.focus_rect.unwrap();
-            let mut motion = Motion::default();
-            motion.retarget(&page, scene.focus_rect, 0);
+            let original = focus_rect(&app).unwrap();
+            let mut motion = Feedback::default();
+
             for (time, selected, status) in [
                 (
                     10,
@@ -252,24 +362,37 @@ fn reflow_and_reverse_retarget_match_complete_frames_at_every_viewport() {
             ] {
                 view.selected = selected;
                 view.status = status.into();
-                update(&mut app, &mut scene, &view).unwrap();
+                update(&mut scene, &view).unwrap();
+                paint_at(&mut app, &mut motion, &scene, time + 16);
                 if time == 10 {
                     assert_ne!(
-                        scene.focus_rect.unwrap()[1],
+                        focus_rect(&app).unwrap()[1],
                         original[1],
                         "Text must reflow before retarget"
                     );
                 }
-                motion.retarget(&page, scene.focus_rect, time);
-                motion.paint(&mut app, &scene, time + 16).unwrap();
+
                 assert_full_frame_matches(&mut app, &format!("{size:?} {page:?} at {time}"));
             }
-            motion.paint(&mut app, &scene, 700).unwrap();
+            paint_at(&mut app, &mut motion, &scene, 1500);
+            let frame = app
+                .world
+                .query::<selection::SelectionFrame>()
+                .iter()
+                .next()
+                .unwrap()
+                .0;
+            let target = focus_rect(&app).unwrap();
+            let current = app.world.get::<ComputedRect>(frame).unwrap().0;
             assert_eq!(
-                app.world.resource::<FocusGeometry>().unwrap().0,
-                scene.focus_rect
+                [
+                    current.x.to_int(),
+                    current.y.to_int(),
+                    current.w.to_int(),
+                    current.h.to_int()
+                ],
+                target
             );
-            assert!(!motion.active(&scene, 700));
         }
     }
 }
@@ -278,9 +401,9 @@ fn reflow_and_reverse_retarget_match_complete_frames_at_every_viewport() {
 fn semantic_phase_transitions_match_complete_frames() {
     for page in [Page::Host, Page::Joined, Page::Leaving] {
         let mut app = app([640, 480]);
-        let mut previous = view(page.clone());
+        let mut previous = view(page);
         let mut scene = draw(&mut app, &previous).unwrap();
-        let mut motion = Motion::default();
+        let mut motion = Feedback::default();
         for (i, phase) in [
             Phase::ApprovalPending,
             Phase::PeerPreparing,
@@ -305,15 +428,9 @@ fn semantic_phase_transitions_match_complete_frames() {
                 "返回"
             }
             .into();
-            if can_update(&previous, &next) {
-                update(&mut app, &mut scene, &next).unwrap();
-            } else {
-                scene = build(&mut app, &next).unwrap();
-            }
-            motion.retarget(&page, scene.focus_rect, i as u64 * 300);
-            motion
-                .paint(&mut app, &scene, i as u64 * 300 + 250)
-                .unwrap();
+            update(&mut scene, &next).unwrap();
+
+            paint_at(&mut app, &mut motion, &scene, i as u64 * 300 + 250);
             assert_full_frame_matches(&mut app, &format!("{page:?} {phase:?}"));
             previous = next;
         }
@@ -324,10 +441,10 @@ fn semantic_phase_transitions_match_complete_frames() {
 fn focus_damage_stays_disjoint_and_avoids_unchanged_interiors() {
     for page in [Page::Choice, Page::Rooms] {
         let mut app = app([640, 480]);
-        let scene = draw(&mut app, &view(page.clone())).unwrap();
-        let mut target = scene.focus_rect.unwrap();
+        let _scene = draw(&mut app, &view(page)).unwrap();
+        let mut target = focus_rect(&app).unwrap();
         target[usize::from(page == Page::Rooms)] += 1;
-        move_focus(&mut app, Some(target));
+        offset_focus(&mut app, usize::from(page == Page::Rooms));
         app.render_dirty().unwrap();
         let plan = &app.world.resource::<LastDirtyRegions>().unwrap().0;
         assert!(plan.rects.len() <= 4);
@@ -356,13 +473,15 @@ fn unchanged_idle_frames_do_not_submit_pixels() {
     install_fonts(&mut app).unwrap();
     let view = view(Page::Choice);
     let mut scene = draw(&mut app, &view).unwrap();
-    let mut motion = Motion::default();
-    motion.retarget(&view.page, scene.focus_rect, 0);
-    motion.paint(&mut app, &scene, 300).unwrap();
+    TIME.with(|clock| clock.set(0));
+    app.add_resource(mirui::ecs::MonoClock::new(now_ns));
+    let mut motion = Feedback::default();
+
+    paint_at(&mut app, &mut motion, &scene, 1500);
     pixels.set(0);
-    update(&mut app, &mut scene, &view).unwrap();
-    motion.paint(&mut app, &scene, 600).unwrap();
-    assert!(!motion.active(&scene, 600));
+    update(&mut scene, &view).unwrap();
+    paint_at(&mut app, &mut motion, &scene, 1800);
+
     assert_eq!(pixels.get(), 0);
 }
 
@@ -397,10 +516,12 @@ fn readiness_is_the_only_source_of_waiting_for_host_copy() {
     view.phase = Phase::HostReady;
     view.ready = true;
     assert!(host_action_enabled(&view));
-    assert!(
-        !can_update(&approval, &view),
-        "Readiness changes cached avatar colors"
-    );
+    let mut app = app([640, 480]);
+    let mut scene = draw(&mut app, &approval).unwrap();
+    let page = body(&app);
+    update(&mut scene, &view).unwrap();
+    app.tick();
+    assert_eq!(body(&app), page);
     view.busy = true;
     assert!(!host_action_enabled(&view));
 }

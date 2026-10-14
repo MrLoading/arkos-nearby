@@ -195,9 +195,9 @@ dependencies = [
 
 [[package]]
 name = "mirui"
-version = "0.48.0"
+version = "0.49.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1f90999cbfdb4d4b9a9cb9457c8124302c9175909de3828312d11ab93b20d217"
+checksum = "ab72c2d94250d640c5cf5527172a6214e402e4f723dc3b49b929909cfa35c62f"
 dependencies = [
  "critical-section",
  "hashbrown",
@@ -210,9 +210,9 @@ dependencies = [
 
 [[package]]
 name = "mirui-macros"
-version = "0.48.0"
+version = "0.49.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "419e63c32a73aa426cb25306675a19f8f0dee20b1fa0414948c8b0576293d77d"
+checksum = "7ea4231403e2e68c068a6d7892bff2737d5b9e98ce8593f02b6ff09d6d8a3dc0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -222,9 +222,9 @@ dependencies = [
 
 [[package]]
 name = "mirx"
-version = "0.48.0"
+version = "0.49.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7d70302aeec7a8090016405ca42406623f3fa2432d0d159829943862496a53ef"
+checksum = "e2790aa156ceff1e72db2451ce3bfefdeef18b2e43eb858bf0de37bac7b0f4d0"
 dependencies = [
  "ttf-parser",
  "wide",
