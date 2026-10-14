@@ -24,6 +24,8 @@ CC_aarch64_unknown_linux_musl=/path/to/clang AR_aarch64_unknown_linux_musl=/path
 
 GUI 通过 `scripts/build_nearby_gui.py` 构建和检查，直接使用 Cargo.lock 锁定的 registry 包。构建记录包含 mirui、mirui-macros、mirx 的 crate 校验和、应用源码摘要和实际锁文件摘要。页面由 PageView 挂载和释放，焦点框通过 FollowBounds 与共享动画调度跟随目标。灰度位图字体的采样外缘使用 PaintInflate 计入重绘覆盖。源码、Clippy、测试和 ARM64 构建使用同一份未修改的框架包。
 
+`gui/nearby/src/model.rs` 定义显示协议；`render.rs` 负责安装与 Scene 入口。`render/state.rs` 发布显示状态，`copy.rs` 提供状态文案，`style.rs` 和 `font.rs` 管理尺寸、颜色与字体，`widgets.rs` 组合公共控件。`chrome.rs`、`choices.rs`、`lists.rs`、`sessions.rs` 和 `pages.rs` 构成页面，`composition.rs` 挂载 PageView，`selection.rs` 管理页面内焦点。网络、游戏核对和会话清理仍属于 native runtime。
+
 先执行 `python3 scripts/build_nearby_gui.py build` 生成当前源码对应的 GUI 和来源记录，再执行质量检查。`release/manifest.json` 和 `release/assets.json` 保留已发行安装资产的身份；构建时将当前 GUI 及其来源记录放入新的本地 bundle，不把本地构建等同于已发布的掌机验收版本。
 
 准备发行归档时，先完成构建和校验，再执行 `python3 scripts/package.py --binary dist/arkos-nearby --expected-sha256 VERIFIED_SHA256`。将 `VERIFIED_SHA256` 替换为构建结果的 SHA-256。程序核对摘要与 ARM64 ELF 类型，打包安装脚本、使用说明和许可证。

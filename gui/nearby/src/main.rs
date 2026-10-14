@@ -98,7 +98,7 @@ fn snapshot(
     let surface = FramebufSurface::with_format(size[0], size[1], ColorFormat::RGBA8888, |_, _| {});
     let mut app = App::new(surface);
     app.with_default_widgets().with_default_systems();
-    render::install_fonts(&mut app)?;
+    render::install(&mut app)?;
     let scene = render::draw(&mut app, &view)?;
     if let Some(now) = time_ms {
         let mut motion = feedback::Feedback::default();
@@ -129,7 +129,7 @@ fn benchmark() -> Result<(), String> {
             });
         let mut app = App::new(surface);
         app.with_default_widgets().with_default_systems();
-        render::install_fonts(&mut app)?;
+        render::install(&mut app)?;
         let mut view = model::View::default();
         if name == "room_focus" {
             view.page = model::Page::Rooms;
@@ -241,7 +241,7 @@ fn live() -> Result<(), String> {
     app.with_default_widgets().with_default_systems();
     platform::record_init("before_fonts", serde_json::json!({}))
         .map_err(|error| error.to_string())?;
-    render::install_fonts(&mut app)?;
+    render::install(&mut app)?;
     app.add_plugin(mirui::app::plugins::StdInstantClockPlugin);
     platform::record_init("after_fonts", serde_json::json!({}))
         .map_err(|error| error.to_string())?;
@@ -343,7 +343,7 @@ fn run() -> Result<(), String> {
             let panel = platform::Framebuffer::open().map_err(|e| e.to_string())?;
             let mut app = App::headless(panel.width, panel.height);
             app.with_default_widgets().with_default_systems();
-            render::install_fonts(&mut app)?;
+            render::install(&mut app)?;
             println!(
                 "{}",
                 serde_json::json!({"width":panel.width,"height":panel.height,"format":format!("{:?}",panel.format),"font":true})

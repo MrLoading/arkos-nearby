@@ -1,6 +1,7 @@
 use super::*;
+use super::{copy::*, selection::FocusTarget};
 use crate::feedback::Feedback;
-use crate::model::{GameRow, RoomRow};
+use crate::model::{GameRow, Page, Phase, RoomRow};
 use mirui::core::model::ModelHandle;
 use mirui::render::texture::ColorFormat;
 use mirui::surface::framebuf::FramebufSurface;
@@ -9,7 +10,9 @@ use mirui::ui::ComputedRect;
 use mirui::ui::OffscreenGeneration;
 use mirui::ui::render_system::LastDirtyRegions;
 use mirui::ui::widgets::FollowBounds;
+use mirui::ui::widgets::Text;
 use std::cell::Cell;
+use std::rc::Rc;
 
 type TestApp = App<FramebufSurface<fn(&[u8], PhysicalRect)>>;
 
@@ -79,7 +82,7 @@ fn offset_focus(app: &mut TestApp, axis: usize) {
 fn app(size: [u16; 2]) -> TestApp {
     let mut app = App::headless(size[0], size[1]);
     app.with_default_widgets().with_default_systems();
-    install_fonts(&mut app).unwrap();
+    install(&mut app).unwrap();
     TIME.with(|clock| clock.set(0));
     app.add_resource(mirui::ecs::MonoClock::new(now_ns));
     app
@@ -470,7 +473,7 @@ fn unchanged_idle_frames_do_not_submit_pixels() {
     });
     let mut app = App::new(surface);
     app.with_default_widgets().with_default_systems();
-    install_fonts(&mut app).unwrap();
+    install(&mut app).unwrap();
     let view = view(Page::Choice);
     let mut scene = draw(&mut app, &view).unwrap();
     TIME.with(|clock| clock.set(0));

@@ -1,4 +1,4 @@
-use super::{DisplayState, PageKey};
+use super::state::{DisplayState, PageKey};
 use mirui::prelude::*;
 use mirui::ui::widgets::FollowBounds;
 use mirui::ui::{Hidden, Parent};
