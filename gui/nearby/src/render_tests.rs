@@ -525,3 +525,105 @@ fn readiness_is_the_only_source_of_waiting_for_host_copy() {
     view.busy = true;
     assert!(!host_action_enabled(&view));
 }
+
+fn page_frames(app: &TestApp) -> Vec<(Entity, Page)> {
+    app.world
+        .query::<selection::SelectionFrame>()
+        .iter()
+        .map(|(_, frame)| (frame.body, frame.page.page))
+        .collect()
+}
+
+fn translation(app: &TestApp, mut node: Entity) -> Fixed {
+    loop {
+        if let Some(transform) = app.world.get::<mirui::ui::widgets::WidgetTransform>(node) {
+            return transform.0.apply_point(mirui::types::Point::ZERO).x;
+        }
+        node = app.world.get::<mirui::ui::Parent>(node).unwrap().0;
+    }
+}
+
+fn advance_checked(app: &mut TestApp, feedback: &mut Feedback, scene: &Scene, until: u64) {
+    while now_ns() / 1_000_000 < until {
+        let next = (now_ns() / 1_000_000 + 16).min(until);
+        paint_at(app, feedback, scene, next);
+        assert_full_frame_matches(app, "interrupted page transition");
+    }
+}
+
+#[test]
+fn rapid_return_reuses_the_page_and_interrupted_navigation_keeps_the_latest_target() {
+    let mut app = app([480, 320]);
+    let mut scene = draw(&mut app, &view(Page::Mode)).unwrap();
+    let root = app.root;
+    let original = body(&app);
+    let mut feedback = Feedback::default();
+    scene.navigation_intent(false);
+    update(&mut scene, &view(Page::Choice)).unwrap();
+    advance_checked(&mut app, &mut feedback, &scene, 16);
+    let incoming = body(&app);
+    let entered_from = translation(&app, incoming);
+    assert!(entered_from > Fixed::ZERO);
+    advance_checked(&mut app, &mut feedback, &scene, 64);
+    assert!(translation(&app, incoming) < entered_from);
+
+    scene.navigation_intent(true);
+    update(&mut scene, &view(Page::Mode)).unwrap();
+    advance_checked(&mut app, &mut feedback, &scene, 80);
+    assert_eq!(body(&app), original);
+    advance_checked(&mut app, &mut feedback, &scene, 1200);
+    assert_eq!(page_frames(&app), vec![(original, Page::Mode)]);
+    assert!(!app.world.is_alive(incoming));
+    assert_eq!(app.root, root);
+
+    scene.navigation_intent(false);
+    update(&mut scene, &view(Page::Choice)).unwrap();
+    advance_checked(&mut app, &mut feedback, &scene, 1216);
+    let retired = page_frames(&app);
+    update(&mut scene, &view(Page::Host)).unwrap();
+    advance_checked(&mut app, &mut feedback, &scene, 1232);
+    update(&mut scene, &view(Page::Rooms)).unwrap();
+    advance_checked(&mut app, &mut feedback, &scene, 3000);
+    assert_eq!(page_frames(&app).len(), 1);
+    assert_eq!(page_frames(&app)[0].1, Page::Rooms);
+    assert!(retired.iter().all(|(node, _)| !app.world.is_alive(*node)));
+    assert_eq!(app.root, root);
+    assert!(focus_rect(&app).is_some());
+}
+
+#[test]
+fn refreshed_room_rows_keep_the_page_and_rebind_selection_to_live_entities() {
+    let mut app = app([480, 320]);
+    let mut next = view(Page::Rooms);
+    let mut scene = draw(&mut app, &next).unwrap();
+    let page = body(&app);
+    let mut feedback = Feedback::default();
+    let old_targets: Vec<_> = app
+        .world
+        .query::<FocusTarget>()
+        .iter()
+        .map(|(node, _)| node)
+        .collect();
+    next.rooms.clear();
+    next.selected = usize::MAX;
+    update(&mut scene, &next).unwrap();
+    advance_checked(&mut app, &mut feedback, &scene, 64);
+    assert_eq!(body(&app), page);
+    assert!(old_targets.iter().all(|node| !app.world.is_alive(*node)));
+    next.rooms = view(Page::Rooms).rooms;
+    next.selected = 2;
+    update(&mut scene, &next).unwrap();
+    advance_checked(&mut app, &mut feedback, &scene, 1200);
+    assert_eq!(body(&app), page);
+    let frame = app
+        .world
+        .query::<selection::SelectionFrame>()
+        .iter()
+        .next()
+        .unwrap()
+        .0;
+    let selected = app.world.get::<FollowBounds>(frame).unwrap().target;
+    assert!(app.world.is_alive(selected));
+    assert_eq!(app.world.get::<FocusTarget>(selected).unwrap().index, 2);
+    assert!(old_targets.iter().all(|node| *node != selected));
+}
