@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+- Smooth menu selection animations and stop redrawing unchanged screens.
+
+- Improve GPU menu responsiveness during selection and connection updates.
+
+- Correct text sampling and transparent text edges in the GPU interface.
+
 - Add an optional GPU menu build with a display preview on the handheld.
 
 - Keep page transitions visible when opening games and network rooms from Options.

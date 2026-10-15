@@ -1,5 +1,6 @@
 use super::{
     Section, StaticCache,
+    cache::GpuTextCache,
     state::DisplayState,
     style::*,
     widgets::{keycap, label, paragraph},
@@ -91,6 +92,7 @@ pub(super) fn header(view: &View, state: model!(DisplayState), metrics: Metrics)
                 paragraph: paragraph(Center, 1)
             ) [
                 FONT_PAINT,
+                GpuTextCache,
             ]
         }
     }
@@ -106,6 +108,7 @@ pub(super) fn footer(view: &View, state: model!(DisplayState), metrics: Metrics)
             align: AlignItems::Center
         ) [
             Section::Footer,
+            GpuTextCache,
         ] {
             Text (
                 text: ${ if state.confirm_visible() { "A" } else { "" } },

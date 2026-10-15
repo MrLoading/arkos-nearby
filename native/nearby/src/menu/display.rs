@@ -89,6 +89,7 @@ impl Display {
         let gui = OwnedChild(
             Command::new(format!("{INSTALL}/arkos-nearby-gui"))
                 .env("SDL_INPUT_LINUX_KEEP_KBD", "1")
+                .env("SDL_RENDER_BATCHING", "1")
                 .env("TERM", "linux")
                 .env("LANG", "C.UTF-8")
                 .env("LC_ALL", "C.UTF-8")

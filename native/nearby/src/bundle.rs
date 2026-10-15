@@ -100,7 +100,7 @@ impl Bundle {
             manifest.schema == 1
                 && manifest.profile == PROFILE
                 && manifest.kernel_sha256 == KERNEL_SHA
-                && manifest.gui_version == "0.49.0"
+                && manifest.gui_version == "0.50.0"
                 && !manifest.version.is_empty(),
             "Unsupported release profile",
         )?;
@@ -165,7 +165,12 @@ mod tests {
             serde_json::from_slice(bundle.bytes(asset("nearby-gui-build.json"))).unwrap();
         let renderer = asset("arkos-nearby-gui");
         assert_eq!(report["mirui"], bundle.manifest.gui_version);
-        assert_eq!(report["target"], "aarch64-unknown-linux-musl");
+        let target = match report["backend"].as_str() {
+            Some("sdl-gpu") => "aarch64-unknown-linux-gnu",
+            None => "aarch64-unknown-linux-musl",
+            Some(backend) => panic!("Unexpected renderer backend: {backend}"),
+        };
+        assert_eq!(report["target"], target);
         assert_eq!(report["sha256"], renderer.sha256);
         assert_eq!(report["bytes"], renderer.size);
         assert_eq!(

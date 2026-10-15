@@ -1,5 +1,6 @@
 use super::{
     Section,
+    cache::GpuTextCache,
     choices::choice,
     chrome::{footer, header},
     lists::{games, rooms},
@@ -60,6 +61,7 @@ pub(super) fn page(view: &View, state: model!(DisplayState), metrics: Metrics) -
                         paragraph: paragraph(Start, 1)
                     ) [
                         FONT_PAINT,
+                        GpuTextCache,
                     ]
                     Row (
                         width: 36,
@@ -91,6 +93,7 @@ pub(super) fn page(view: &View, state: model!(DisplayState), metrics: Metrics) -
                 ) [
                     FONT_PAINT,
                     Section::Status,
+                    GpuTextCache,
                 ]
                 if view.network_only && matches!(view.page, Page::Host | Page::Joined) {
                     network_panel (view, state, metrics)

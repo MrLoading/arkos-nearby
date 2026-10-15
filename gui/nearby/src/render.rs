@@ -7,6 +7,7 @@ use mirui::ui::widgets::page_view;
 use state::{DisplayHandle, PageKey};
 use style::{ACCENT_DIM, BACKGROUND, Metrics};
 
+mod cache;
 mod choices;
 mod chrome;
 mod composition;
@@ -40,6 +41,7 @@ pub fn install<B: Surface, F: RendererFactory<B>>(app: &mut App<B, F>) -> Result
     app.with_widget(page_view::view::<PageKey>());
     app.with_widget(selection::target::view());
     app.with_widget(selection::frame::view());
+    app.with_widget(cache::text_cache::view());
     font::install(app)?;
     state::install(app);
     Ok(())

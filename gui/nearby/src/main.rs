@@ -248,18 +248,20 @@ fn live() -> Result<(), String> {
     };
     #[cfg(feature = "gpu")]
     let mut app = {
-        use mirui::surface::sdl_gpu::{SdlGpuConfig, SdlGpuFactory, SdlGpuSurface};
-        let surface = SdlGpuSurface::try_new(
+        use mirui::surface::sdl_gpu::{
+            SdlGpuConfig, SdlGpuDriver, SdlGpuFactory, SdlGpuSurface, SdlWindowMode,
+        };
+        let surface = SdlGpuSurface::with_config(
             "Nearby Multiplayer",
             640,
             480,
             SdlGpuConfig {
-                gles: true,
-                samples: 0,
-                fullscreen: true,
+                driver: SdlGpuDriver::OpenGles2 { samples: 0 },
+                window: SdlWindowMode::FullscreenDesktop,
                 vsync: true,
             },
-        )?;
+        )
+        .map_err(|e| e.to_string())?;
         eprintln!(
             "{}",
             serde_json::json!({"renderer":surface.renderer_name(),"backend":"sdl-gpu","video":std::env::var("SDL_VIDEODRIVER").ok()})
@@ -281,6 +283,7 @@ fn live() -> Result<(), String> {
     let mut first_frame_sent = false;
     let mut metrics = FrameMetrics::default();
     while !quit.load(Ordering::Relaxed) {
+        let mut rendered = false;
         let mut latest = None;
         loop {
             match rx.try_recv() {
@@ -304,6 +307,7 @@ fn live() -> Result<(), String> {
                     scene = Some(next_scene);
                 }
                 metrics.record(frame_start, full);
+                rendered = true;
                 if let Some(error) = flush_error.borrow_mut().take() {
                     return Err(format!("Framebuffer pwrite: {error}"));
                 }
@@ -323,7 +327,7 @@ fn live() -> Result<(), String> {
         }
         if let Some(scene) = scene.as_ref() {
             let now = epoch.elapsed().as_millis() as u64;
-            if Instant::now() >= next_frame {
+            if !rendered && Instant::now() >= next_frame {
                 let frame_start = Instant::now();
                 next_frame = frame_start + FRAME_INTERVAL;
                 motion.paint(&mut app, scene, now)?;
@@ -361,18 +365,20 @@ fn live() -> Result<(), String> {
 
 #[cfg(all(target_os = "linux", feature = "gpu"))]
 fn gpu_probe(output: &Path) -> Result<(), String> {
-    use mirui::surface::sdl_gpu::{SdlGpuConfig, SdlGpuFactory, SdlGpuSurface};
-    let surface = SdlGpuSurface::try_new(
+    use mirui::surface::sdl_gpu::{
+        SdlGpuConfig, SdlGpuDriver, SdlGpuFactory, SdlGpuSurface, SdlWindowMode,
+    };
+    let surface = SdlGpuSurface::with_config(
         "Nearby Multiplayer",
         640,
         480,
         SdlGpuConfig {
-            gles: true,
-            samples: 0,
-            fullscreen: true,
+            driver: SdlGpuDriver::OpenGles2 { samples: 0 },
+            window: SdlWindowMode::FullscreenDesktop,
             vsync: true,
         },
-    )?;
+    )
+    .map_err(|e| e.to_string())?;
     let renderer = surface.renderer_name();
     if renderer != "opengles2" {
         return Err(format!("Expected GLES acceleration, found {renderer}"));
@@ -384,14 +390,14 @@ fn gpu_probe(output: &Path) -> Result<(), String> {
         page: model::Page::Mode,
         ..Default::default()
     };
-    app.backend.request_capture();
     let start = std::time::Instant::now();
-    render::draw(&mut app, &view)?;
+    let _scene = render::build(&mut app, &view)?;
+    let texture = app
+        .snapshot()
+        .map_err(|e| format!("{e:?}"))?
+        .ok_or("No GPU frame captured")?;
     let elapsed = start.elapsed().as_secs_f64() * 1000.0;
-    let bytes = app
-        .backend
-        .take_capture()
-        .ok_or("No GPU frame captured")??;
+    let bytes = texture.buf.as_slice();
     let mut encoder = png::Encoder::new(
         BufWriter::new(File::create(output).map_err(|e| e.to_string())?),
         640,
@@ -402,7 +408,7 @@ fn gpu_probe(output: &Path) -> Result<(), String> {
     encoder
         .write_header()
         .map_err(|e| e.to_string())?
-        .write_image_data(&bytes)
+        .write_image_data(bytes)
         .map_err(|e| e.to_string())?;
     println!(
         "{}",
@@ -415,7 +421,7 @@ fn run() -> Result<(), String> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.as_slice() {
         [argument] if argument == "--version" => {
-            println!("arkos-nearby-gui 0.1.0 (mirui 0.49.0)");
+            println!("arkos-nearby-gui 0.1.0 (mirui 0.50.0)");
             Ok(())
         }
         #[cfg(all(target_os = "linux", not(feature = "gpu")))]
