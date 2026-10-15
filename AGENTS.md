@@ -10,6 +10,8 @@ Keep one MenuSession for the entire Options interaction. menu/display.rs owns th
 
 Public documentation describes current behavior and measured compatibility. Renderer snapshots illustrate the interface; metadata checks and synthetic captures do not establish game-specific multiplayer acceptance. Code and comments use English. Markdown paragraphs use one physical line each.
 
+The optional GPU interface uses the same scene composition through Surface and RendererFactory. scripts/build_nearby_gpu.py stages a checksum-verified mirui GLES patch and ARM64 GNU build under /tmp/arkos-rust-build. Keep private SDL libraries scoped to the candidate directory, retain transient backbuffer rendering, and record hardware acceptance separately from compilation. The default installer retains its framebuffer interface until GPU deployment is verified.
+
 README and release notes cover the actual product and its installation/play workflow. Keep conversation constraints and rejected proposals in agent instructions. Prefer concrete requirements and compatibility results over hypothetical contrasts or absence/guarantee disclaimers. Use a concise introduction, useful badges, interface previews and a short quick start.
 
 Product README and changelog entries describe player actions and observable results. Routine implementation choices such as state models, DSL syntax, Flex layout, reactive bindings, framework versions and render caches belong in architecture or build documentation; do not present them as product features.

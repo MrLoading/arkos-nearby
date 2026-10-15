@@ -1,7 +1,8 @@
 use crate::model::View;
 use copy::loading;
+use mirui::app::RendererFactory;
 use mirui::prelude::*;
-use mirui::surface::FramebufferAccess;
+use mirui::surface::Surface;
 use mirui::ui::widgets::page_view;
 use state::{DisplayHandle, PageKey};
 use style::{ACCENT_DIM, BACKGROUND, Metrics};
@@ -34,7 +35,7 @@ enum Section {
     FocusHost,
 }
 
-pub fn install<B: FramebufferAccess>(app: &mut App<B>) -> Result<(), String> {
+pub fn install<B: Surface, F: RendererFactory<B>>(app: &mut App<B, F>) -> Result<(), String> {
     app.with_offscreen_pool_budget(2 * 1024 * 1024);
     app.with_widget(page_view::view::<PageKey>());
     app.with_widget(selection::target::view());
@@ -71,7 +72,10 @@ pub fn update(scene: &mut Scene, view: &View) -> Result<(), String> {
     Ok(())
 }
 
-pub fn build<B: FramebufferAccess>(app: &mut App<B>, view: &View) -> Result<Scene, String> {
+pub fn build<B: Surface, F: RendererFactory<B>>(
+    app: &mut App<B, F>,
+    view: &View,
+) -> Result<Scene, String> {
     let root = match app.root {
         Some(root) => root,
         None => app.spawn_root().bg_color(BACKGROUND).id(),
@@ -101,7 +105,10 @@ fn has_pages() -> bool {
     res!(mirui::ui::IdMap).with(|ids| ids.get("nearby_pages").is_some())
 }
 
-pub fn draw<B: FramebufferAccess>(app: &mut App<B>, view: &View) -> Result<Scene, String> {
+pub fn draw<B: Surface, F: RendererFactory<B>>(
+    app: &mut App<B, F>,
+    view: &View,
+) -> Result<Scene, String> {
     let scene = build(app, view)?;
     app.render()
         .map_err(|error| format!("Menu frame: {error:?}"))?;

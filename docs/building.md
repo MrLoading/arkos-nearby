@@ -42,6 +42,8 @@ CC_aarch64_unknown_linux_musl=/path/to/clang AR_aarch64_unknown_linux_musl=/path
 
 ## 界面截图
 
+SDL2/GLES 候选版的工具链、构建命令及实机检查见 [GPU 界面构建](gpu-rendering.md)。
+
 ```sh
 python3 scripts/build_nearby_gui.py snapshot --view docs/screenshots/views/room-choice.json --output /tmp/arkos-room-choice.png
 ```

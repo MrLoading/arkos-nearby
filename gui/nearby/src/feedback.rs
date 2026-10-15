@@ -1,7 +1,8 @@
 use crate::render::Scene;
 use mirui::anim::{PlayMode, Tween, ease};
+use mirui::app::RendererFactory;
 use mirui::prelude::*;
-use mirui::surface::FramebufferAccess;
+use mirui::surface::Surface;
 
 pub struct Feedback {
     press: Tween,
@@ -61,9 +62,9 @@ impl Feedback {
         scene.feedback(stamp, activity);
     }
 
-    pub fn paint<B: FramebufferAccess>(
+    pub fn paint<B: Surface, F: RendererFactory<B>>(
         &mut self,
-        app: &mut App<B>,
+        app: &mut App<B, F>,
         scene: &Scene,
         now: u64,
     ) -> Result<(), String> {

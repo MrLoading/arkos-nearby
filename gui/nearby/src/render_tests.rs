@@ -4,6 +4,7 @@ use crate::feedback::Feedback;
 use crate::model::{GameRow, Page, Phase, RoomRow};
 use mirui::core::model::ModelHandle;
 use mirui::render::texture::ColorFormat;
+use mirui::surface::FramebufferAccess;
 use mirui::surface::framebuf::FramebufSurface;
 use mirui::types::PhysicalRect;
 use mirui::ui::ComputedRect;

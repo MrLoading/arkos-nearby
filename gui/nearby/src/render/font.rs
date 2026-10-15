@@ -1,11 +1,14 @@
 use super::style::FONT;
+use mirui::app::RendererFactory;
 use mirui::prelude::*;
 use mirui::render::font::{Font, FontBackend, FontManager, mirx::MirxFontProvider};
-use mirui::surface::FramebufferAccess;
+use mirui::surface::Surface;
 use std::rc::Rc;
 const FONT_BYTES: &[u8] = include_bytes!("../../assets/nearby-menu-20.mirx");
 
-pub(super) fn install<B: FramebufferAccess>(app: &mut App<B>) -> Result<(), String> {
+pub(super) fn install<B: Surface, F: RendererFactory<B>>(
+    app: &mut App<B, F>,
+) -> Result<(), String> {
     let limits = mirx::reader::PayloadLimits::HOST;
     let options = mirx::reader::ReadOptions::new().with_payload_limits(limits);
     let reader = mirx::Reader::open_with(FONT_BYTES, &options)

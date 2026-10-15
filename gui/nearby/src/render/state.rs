@@ -1,8 +1,9 @@
 use super::{copy::*, selection, style::*};
 use crate::model::{Page, Phase, View};
 use TextField::{Headline, HostButton, Next, Peer};
+use mirui::app::RendererFactory;
 use mirui::prelude::*;
-use mirui::surface::FramebufferAccess;
+use mirui::surface::Surface;
 use mirui::ui::widgets::navigation::{PageDirection, PageTransition};
 
 #[derive(Clone, Copy)]
@@ -273,7 +274,7 @@ pub(super) struct DisplayRuntime {
     state: DisplayHandle,
 }
 
-pub(super) fn install<B: FramebufferAccess>(app: &mut App<B>) {
+pub(super) fn install<B: Surface, F: RendererFactory<B>>(app: &mut App<B, F>) {
     let state = app
         .add_model(DisplayState {
             view: View::default(),

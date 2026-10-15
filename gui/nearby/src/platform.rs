@@ -1,10 +1,14 @@
 use crate::model::Action;
+#[cfg(not(feature = "gpu"))]
 use mirui::render::texture::ColorFormat;
+#[cfg(not(feature = "gpu"))]
 use mirui::types::PhysicalRect;
 use std::fs::{File, OpenOptions, Permissions};
 use std::io::{self, Read, Write};
 use std::os::fd::AsRawFd;
-use std::os::unix::fs::{FileExt, OpenOptionsExt, PermissionsExt};
+#[cfg(not(feature = "gpu"))]
+use std::os::unix::fs::FileExt;
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::Path;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -33,6 +37,7 @@ pub fn record_init(stage: &str, detail: serde_json::Value) -> io::Result<()> {
     File::open(directory)?.sync_all()
 }
 
+#[cfg(not(feature = "gpu"))]
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
 struct Bitfield {
@@ -41,6 +46,7 @@ struct Bitfield {
     msb_right: u32,
 }
 
+#[cfg(not(feature = "gpu"))]
 #[repr(C)]
 #[derive(Default)]
 struct VariableInfo {
@@ -75,6 +81,7 @@ struct VariableInfo {
     reserved: [u32; 4],
 }
 
+#[cfg(not(feature = "gpu"))]
 #[repr(C)]
 struct FixedInfo {
     id: [u8; 16],
@@ -94,6 +101,7 @@ struct FixedInfo {
     reserved: [u16; 2],
 }
 
+#[cfg(not(feature = "gpu"))]
 pub struct Framebuffer {
     file: File,
     pub width: u16,
@@ -112,6 +120,7 @@ fn checked(result: libc::c_int) -> io::Result<()> {
     }
 }
 
+#[cfg(not(feature = "gpu"))]
 impl Framebuffer {
     pub fn open() -> io::Result<Self> {
         let file = OpenOptions::new().read(true).write(true).open("/dev/fb0")?;

@@ -5,6 +5,9 @@ edition = "2024"
 rust-version = "1.85"
 license = "MIT"
 
+[features]
+gpu = ["mirui/sdl-gpu"]
+
 [dependencies]
 mirui = { version = "=0.49.0", default-features = false, features = ["std", "quad-aa"] }
 mirx = "=0.49.0"

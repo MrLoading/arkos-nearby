@@ -81,7 +81,7 @@ impl Drop for FrameMetrics {
             "{}",
             serde_json::json!({
                 "ui_frame_metrics":{"full":self.full.report(),"dirty":self.dirty.report(),"cadence":self.cadence.report()},
-                "includes_framebuffer_write":true,
+                "includes_framebuffer_write":!cfg!(feature = "gpu"),"backend":if cfg!(feature = "gpu") { "sdl-gpu" } else { "framebuffer" },
             })
         );
     }
@@ -215,29 +215,57 @@ fn live() -> Result<(), String> {
     let mut terminal = platform::Terminal::open().map_err(|e| e.to_string())?;
     platform::record_init("after_terminal", serde_json::json!({}))
         .map_err(|error| error.to_string())?;
-    platform::record_init("before_fb_open", serde_json::json!({"path":"/dev/fb0"}))
+    platform::record_init(
+        "before_display_open",
+        serde_json::json!({"backend":if cfg!(feature = "gpu") { "sdl-gpu" } else { "framebuffer" }}),
+    )
         .map_err(|error| error.to_string())?;
+    #[cfg(not(feature = "gpu"))]
     let mut panel = platform::Framebuffer::open().map_err(|e| e.to_string())?;
-    let flush_error = Rc::new(RefCell::new(None));
+    let flush_error = Rc::new(RefCell::new(None::<std::io::Error>));
+    #[cfg(not(feature = "gpu"))]
     let flush_result = Rc::clone(&flush_error);
     let quit = Arc::new(AtomicBool::new(false));
     for event in [signal_hook::consts::SIGTERM, signal_hook::consts::SIGINT] {
         signal_hook::flag::register(event, Arc::clone(&quit)).map_err(|e| e.to_string())?;
     }
-    let surface = FramebufSurface::with_format(
-        panel.width,
-        panel.height,
-        panel.format,
-        move |pixels, area| {
-            if flush_result.borrow().is_some() {
-                return;
-            }
-            if let Err(error) = panel.flush(pixels, area) {
-                *flush_result.borrow_mut() = Some(error);
-            }
-        },
-    );
-    let mut app = App::new(surface);
+    #[cfg(not(feature = "gpu"))]
+    let mut app = {
+        let surface = FramebufSurface::with_format(
+            panel.width,
+            panel.height,
+            panel.format,
+            move |pixels, area| {
+                if flush_result.borrow().is_some() {
+                    return;
+                }
+                if let Err(error) = panel.flush(pixels, area) {
+                    *flush_result.borrow_mut() = Some(error);
+                }
+            },
+        );
+        App::new(surface)
+    };
+    #[cfg(feature = "gpu")]
+    let mut app = {
+        use mirui::surface::sdl_gpu::{SdlGpuConfig, SdlGpuFactory, SdlGpuSurface};
+        let surface = SdlGpuSurface::try_new(
+            "Nearby Multiplayer",
+            640,
+            480,
+            SdlGpuConfig {
+                gles: true,
+                samples: 0,
+                fullscreen: true,
+                vsync: true,
+            },
+        )?;
+        eprintln!(
+            "{}",
+            serde_json::json!({"renderer":surface.renderer_name(),"backend":"sdl-gpu","video":std::env::var("SDL_VIDEODRIVER").ok()})
+        );
+        App::with_factory(surface, SdlGpuFactory::new())
+    };
     app.with_default_widgets().with_default_systems();
     platform::record_init("before_fonts", serde_json::json!({}))
         .map_err(|error| error.to_string())?;
@@ -331,6 +359,58 @@ fn live() -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(all(target_os = "linux", feature = "gpu"))]
+fn gpu_probe(output: &Path) -> Result<(), String> {
+    use mirui::surface::sdl_gpu::{SdlGpuConfig, SdlGpuFactory, SdlGpuSurface};
+    let surface = SdlGpuSurface::try_new(
+        "Nearby Multiplayer",
+        640,
+        480,
+        SdlGpuConfig {
+            gles: true,
+            samples: 0,
+            fullscreen: true,
+            vsync: true,
+        },
+    )?;
+    let renderer = surface.renderer_name();
+    if renderer != "opengles2" {
+        return Err(format!("Expected GLES acceleration, found {renderer}"));
+    }
+    let mut app = App::with_factory(surface, SdlGpuFactory::new());
+    app.with_default_widgets().with_default_systems();
+    render::install(&mut app)?;
+    let view = model::View {
+        page: model::Page::Mode,
+        ..Default::default()
+    };
+    app.backend.request_capture();
+    let start = std::time::Instant::now();
+    render::draw(&mut app, &view)?;
+    let elapsed = start.elapsed().as_secs_f64() * 1000.0;
+    let bytes = app
+        .backend
+        .take_capture()
+        .ok_or("No GPU frame captured")??;
+    let mut encoder = png::Encoder::new(
+        BufWriter::new(File::create(output).map_err(|e| e.to_string())?),
+        640,
+        480,
+    );
+    encoder.set_color(png::ColorType::Rgba);
+    encoder.set_depth(png::BitDepth::Eight);
+    encoder
+        .write_header()
+        .map_err(|e| e.to_string())?
+        .write_image_data(&bytes)
+        .map_err(|e| e.to_string())?;
+    println!(
+        "{}",
+        serde_json::json!({"renderer":renderer,"first_frame_ms":elapsed,"capture":output,"bytes":bytes.len()})
+    );
+    Ok(())
+}
+
 fn run() -> Result<(), String> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.as_slice() {
@@ -338,7 +418,7 @@ fn run() -> Result<(), String> {
             println!("arkos-nearby-gui 0.1.0 (mirui 0.49.0)");
             Ok(())
         }
-        #[cfg(target_os = "linux")]
+        #[cfg(all(target_os = "linux", not(feature = "gpu")))]
         [argument] if argument == "--probe" => {
             let panel = platform::Framebuffer::open().map_err(|e| e.to_string())?;
             let mut app = App::headless(panel.width, panel.height);
@@ -350,6 +430,8 @@ fn run() -> Result<(), String> {
             );
             Ok(())
         }
+        #[cfg(all(target_os = "linux", feature = "gpu"))]
+        [mode, output] if mode == "--gpu-probe" => gpu_probe(Path::new(output)),
         [mode, input, output] if mode == "--snapshot" => {
             snapshot(Path::new(input), Path::new(output), None, [640, 480])
         }
