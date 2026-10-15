@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Use pixel lettering for menu titles, game names and status messages.
+
 - Smooth menu selection animations and stop redrawing unchanged screens.
 
 - Improve GPU menu responsiveness during selection and connection updates.

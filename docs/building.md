@@ -28,7 +28,7 @@ GUI 通过 `scripts/build_nearby_gui.py` 构建和检查，直接使用 Cargo.lo
 
 Options 菜单通过一个 `MenuSession` 连接模式选择、游戏列表与房间流程。`native/nearby/src/menu/display.rs` 持有 GUI 进程、手柄映射和消息通道，跨流程只更新显示快照，退出整个界面时释放进程。后台回复按屏幕会话隔离，输入保留接收时间检查；网络保留与恢复仍由原会话流程决定。游戏内入口使用独立的菜单会话。
 
-先执行 `python3 scripts/build_nearby_gui.py build` 生成当前源码对应的 GUI 和来源记录，再执行质量检查。`release/manifest.json` 和 `release/assets.json` 保留已发行安装资产的身份；构建时将当前 GUI 及其来源记录放入新的本地 bundle，不把本地构建等同于已发布的掌机验收版本。
+先执行 `python3 scripts/build_nearby_gui.py build` 生成当前源码对应的 GUI 和来源记录，再执行质量检查。`release/manifest.json` 和 `release/assets.json` 保留已发行安装资产的身份；构建时将当前 GUI、字体许可证及来源记录放入新的本地 bundle。
 
 准备发行归档时，先完成构建和校验，再执行 `python3 scripts/package.py --binary dist/arkos-nearby --expected-sha256 VERIFIED_SHA256`。将 `VERIFIED_SHA256` 替换为构建结果的 SHA-256。程序核对摘要与 ARM64 ELF 类型，打包安装脚本、使用说明和许可证。
 
@@ -41,6 +41,10 @@ CC_aarch64_unknown_linux_musl=/path/to/clang AR_aarch64_unknown_linux_musl=/path
 检查 Python 格式和语法、源文件摘要、Rust 格式与警告、GUI 和运行程序单元测试、ARM64 交叉编译及核心查询器 C 源码。可以用 `RUFF=/path/to/ruff` 指定 Ruff 路径。
 
 ## 界面截图
+
+界面使用 Fusion Pixel 简体中文像素字体，正文为 12px，标题为 24px。两个字库覆盖 `gui/nearby/assets/nearby-menu-charset.txt` 中的 3856 个字符。字体来源、转换输入和输出摘要见 `font-source.json`，字体及其衍生来源许可证合并保存在 `OFL.txt`。
+
+重新生成字库时，将来源记录中的 WOFF 解码为 OpenType 文件，使用 ICU 0.11.1 执行 `icu bake-font nearby-pixel.otf --charset-file gui/nearby/assets/nearby-menu-charset.txt --size 12 --bit-depth 1 --format gray -O /tmp/nearby-font`；将字号改为 24 生成标题字库。将产物分别命名为 `nearby-menu-12.mirx` 和 `nearby-title-24.mirx`，并更新来源记录中的摘要与大小。
 
 SDL2/GLES 候选版的工具链、构建命令及实机检查见 [GPU 界面构建](gpu-rendering.md)。
 

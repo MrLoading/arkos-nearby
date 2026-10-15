@@ -121,7 +121,7 @@ pub(super) fn network_panel(_view: &View, state: model!(DisplayState), metrics: 
                 live_label (state, Headline, metrics.title, FOREGROUND, Center)
                 Text (
                     text: ${ state.address() },
-                    font: FONT,
+                    font: font(metrics.body),
                     font_size: metrics.body,
                     text_color: SECONDARY,
                     height: Dimension::Content,
@@ -134,7 +134,7 @@ pub(super) fn network_panel(_view: &View, state: model!(DisplayState), metrics: 
                     width: Dimension::percent(100),
                     min_width: 0,
                     height: Dimension::Content,
-                    font: FONT,
+                    font: font(metrics.small),
                     font_size: metrics.small,
                     text_color: SECONDARY,
                     paragraph: paragraph(Center, 3),
@@ -194,7 +194,7 @@ pub(super) fn joined(_view: &View, state: model!(DisplayState), metrics: Metrics
                             width: if metrics.compact { 22 } else { 28 },
                             height: if metrics.compact { 22 } else { 28 },
                             bg_color: ${ state.steps()[step.0].background },
-                            font: FONT,
+                            font: font(metrics.small),
                             font_size: metrics.small,
                             text_color: ${ state.steps()[step.0].foreground },
                             paragraph: paragraph(Center, 1)
@@ -232,7 +232,7 @@ pub(super) fn joined(_view: &View, state: model!(DisplayState), metrics: Metrics
             if ${ !state.room_name().is_empty() } {
                 Text (
                     text: ${ state.room_name() },
-                    font: FONT,
+                    font: font(metrics.small),
                     font_size: metrics.small,
                     text_color: SECONDARY,
                     height: Dimension::Content,
@@ -262,7 +262,7 @@ pub(super) fn leaving(state: model!(DisplayState), metrics: Metrics) -> Entity {
                 width: 44,
                 height: 36,
                 bg_color: ACCENT_DIM,
-                font: FONT,
+                font: font(metrics.title),
                 font_size: metrics.title,
                 text_color: ACCENT,
                 paragraph: paragraph(Center, 1)
@@ -307,7 +307,7 @@ pub(super) fn unavailable(metrics: Metrics) -> Entity {
                 width: 44,
                 height: 40,
                 bg_color: WARNING_PANEL,
-                font: FONT,
+                font: font(metrics.title),
                 font_size: metrics.title,
                 text_color: WARNING,
                 paragraph: paragraph(Center, 1)

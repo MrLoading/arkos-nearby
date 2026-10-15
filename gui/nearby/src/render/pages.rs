@@ -55,7 +55,7 @@ pub(super) fn page(view: &View, state: model!(DisplayState), metrics: Metrics) -
                         min_width: 0,
                         height: Dimension::Content,
                         min_height: i32::from(metrics.title) + 8,
-                        font: FONT,
+                        font: font(metrics.title),
                         font_size: metrics.title,
                         text_color: FOREGROUND,
                         paragraph: paragraph(Start, 1)
@@ -85,7 +85,7 @@ pub(super) fn page(view: &View, state: model!(DisplayState), metrics: Metrics) -
                     shrink: 0.0,
                     width: Dimension::percent(100),
                     min_width: 0,
-                    font: FONT,
+                    font: font(metrics.small),
                     font_size: metrics.small,
                     text_color: SECONDARY,
                     paragraph: paragraph(Start, 2),

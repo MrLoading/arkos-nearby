@@ -74,7 +74,7 @@ pub(super) fn room_rows(rows: &[(usize, crate::model::RoomRow)], metrics: Metric
                         "请好友先创建房间，并把两台掌机放近一些",
                         width: Dimension::percent(100),
                         height: Dimension::Content,
-                        font: FONT,
+                        font: font(metrics.small),
                         font_size: metrics.small,
                         text_color: SECONDARY,
                         paragraph: paragraph(Center, 2)
@@ -191,7 +191,7 @@ pub(super) fn game_rows(rows: &[crate::model::GameRow], metrics: Metrics) -> Ent
                             width: if metrics.compact { 20 } else { 32 },
                             shrink: 0.0,
                             height: Dimension::Content,
-                            font: FONT,
+                            font: font(metrics.title),
                             font_size: metrics.title,
                             text_color: ACCENT,
                             paragraph: paragraph(Center, 1)

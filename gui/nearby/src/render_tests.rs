@@ -319,7 +319,9 @@ fn responsive_layout_keeps_focus_and_text_sections_inside_the_viewport() {
             if let Some([x, y, w, h]) = focus_rect(&app) {
                 assert!(w > 40 && h >= 26, "{size:?} {page:?}: {w}×{h}");
                 assert!(
-                    x >= 0 && y >= 0 && x + w <= i32::from(size[0]) && y + h <= footer.y.to_int()
+                    x >= 0 && y >= 0 && x + w <= i32::from(size[0]) && y + h <= footer.y.to_int(),
+                    "{size:?} {page:?}: focus {:?} escapes footer {footer:?}",
+                    [x, y, w, h]
                 );
             }
         }

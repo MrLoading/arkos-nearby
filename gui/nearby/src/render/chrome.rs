@@ -65,13 +65,13 @@ pub(super) fn header(view: &View, state: model!(DisplayState), metrics: Metrics)
             ] {
                 label (
                     "附近联机",
-                    if metrics.compact { 20 } else { 27 },
+                    TITLE_SIZE,
                     FOREGROUND,
                     Start
                 )
                 Text (
                     text: ${ state.subtitle() },
-                    font: FONT,
+                    font: font(metrics.small),
                     font_size: metrics.small,
                     text_color: SECONDARY,
                     height: Dimension::Content,
@@ -86,7 +86,7 @@ pub(super) fn header(view: &View, state: model!(DisplayState), metrics: Metrics)
                 height: if metrics.compact { 26 } else { 34 },
                 shrink: 0.0,
                 bg_color: PANEL,
-                font: FONT,
+                font: font(metrics.small),
                 font_size: metrics.small,
                 text_color: SECONDARY,
                 paragraph: paragraph(Center, 1)
@@ -116,7 +116,7 @@ pub(super) fn footer(view: &View, state: model!(DisplayState), metrics: Metrics)
                 height: if metrics.compact { 20 } else { 25 },
                 shrink: 0.0,
                 bg_color: ${ if state.confirm_visible() { PANEL } else { BACKGROUND } },
-                font: FONT,
+                font: font(metrics.small),
                 font_size: metrics.small,
                 text_color: SECONDARY,
                 paragraph: paragraph(Center, 1)
@@ -128,7 +128,7 @@ pub(super) fn footer(view: &View, state: model!(DisplayState), metrics: Metrics)
                 width: Dimension::Content,
                 shrink: 0.0,
                 height: Dimension::Content,
-                font: FONT,
+                font: font(metrics.small),
                 font_size: metrics.small,
                 text_color: SECONDARY,
                 paragraph: paragraph(Start, 1)
@@ -141,7 +141,7 @@ pub(super) fn footer(view: &View, state: model!(DisplayState), metrics: Metrics)
                 max_width: if metrics.compact { 130 } else { 210 },
                 min_width: 0,
                 height: Dimension::Content,
-                font: FONT,
+                font: font(metrics.small),
                 font_size: metrics.small,
                 text_color: SECONDARY,
                 paragraph: paragraph(Start, 1)
@@ -153,7 +153,7 @@ pub(super) fn footer(view: &View, state: model!(DisplayState), metrics: Metrics)
                 Text (
                     "刷新",
                     height: Dimension::Content,
-                    font: FONT,
+                    font: font(metrics.small),
                     font_size: metrics.small,
                     text_color: SECONDARY,
                     paragraph: paragraph(Start, 1),
@@ -167,7 +167,7 @@ pub(super) fn footer(view: &View, state: model!(DisplayState), metrics: Metrics)
                 grow: 1.0,
                 min_width: 0,
                 height: Dimension::Content,
-                font: FONT,
+                font: font(metrics.small),
                 font_size: metrics.small,
                 text_color: SECONDARY,
                 paragraph: paragraph(End, 1),

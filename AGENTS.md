@@ -1,5 +1,7 @@
 # Contribution checks
 
+Menu typography uses Fusion Pixel with native 12px and 24px assets. Select the matching font face through the shared style helper, including header titles; preserve the catalog charset and combined font licenses when rebuilding assets.
+
 Run `sh scripts/quality.sh` before committing source changes. Builds require the prepared release assets and an existing Rust 1.92 toolchain with ARM64 musl, clang and llvm-ar. Keep compiler output under `/tmp/arkos-rust-build/` and distribution output under the ignored `dist/` directory.
 
 Device behavior belongs to the native Rust runtime. Preserve manual entry points, owned session cleanup and original firmware, drivers, configurations and saves. Do not add boot services or install-time gameplay. The GUI uses mirui 0.50.0 declarative Flex compositions on the handheld framebuffer, cinnabar/ivory/ink colors and square corners. Text wraps or truncates through paragraph layout; FollowBounds follows the selected widget and PageView owns page replacement. Keep the display Model registered once per App, static subtree caches separate from dynamic bindings, and focus damage limited to changed border strips.

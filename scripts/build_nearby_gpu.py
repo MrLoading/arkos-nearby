@@ -12,6 +12,7 @@ import build_paths
 
 ROOT = Path(__file__).resolve().parents[1]
 TRIPLE = "aarch64-unknown-linux-gnu"
+LICENSES = ROOT / "docs/licenses"
 
 
 def sha(path):
@@ -69,7 +70,11 @@ def main():
     shutil.copy2(binary, output / "arkos-nearby-gui")
     (output / "lib").mkdir(exist_ok=True)
     shutil.copy2(library, output / "lib/libSDL2-2.0.so.0")
-    shutil.copytree(ROOT / "docs/licenses", output / "licenses", dirs_exist_ok=True)
+    shutil.copytree(LICENSES, output / "licenses", dirs_exist_ok=True)
+    font_licenses = output / "licenses/font"
+    font_licenses.mkdir(exist_ok=True)
+    for name in ("OFL.txt", "font-source.json"):
+        shutil.copy2(ROOT / "gui/nearby/assets" / name, font_licenses / name)
     report = {
         "schema": 2,
         "target": TRIPLE,

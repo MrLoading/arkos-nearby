@@ -3,6 +3,16 @@ pub(super) const FONT_PAINT: mirui::ui::dirty::PaintInflate =
     mirui::ui::dirty::PaintInflate::uniform(Fixed::ONE);
 
 pub(super) const FONT: FontToken = FontToken::Custom("nearby_menu");
+pub(super) const TITLE_FONT: FontToken = FontToken::Custom("nearby_title");
+pub(super) const TITLE_SIZE: u16 = 24;
+
+pub(super) fn font(size: u16) -> FontToken {
+    match size {
+        12 => FONT,
+        TITLE_SIZE => TITLE_FONT,
+        _ => unreachable!("Pixel text requires a native font size"),
+    }
+}
 pub(super) const BACKGROUND: Color = Color::rgb(242, 235, 221);
 pub(super) const PANEL: Color = Color::rgb(231, 221, 200);
 pub(super) const ACCENT: Color = Color::rgb(166, 61, 50);
@@ -30,11 +40,11 @@ impl Metrics {
         let compact = height < 400;
         Self {
             compact,
-            title: if compact { 18 } else { 25 },
-            body: if compact { 14 } else { 17 },
-            small: if compact { 10 } else { 15 },
-            row_title: if compact { 14 } else { 18 },
-            row_detail: if compact { 9 } else { 12 },
+            title: if compact { 12 } else { TITLE_SIZE },
+            body: 12,
+            small: 12,
+            row_title: if compact { 12 } else { 24 },
+            row_detail: 12,
             gap: if compact { 3 } else { 8 },
             inset: if compact { 8 } else { 18 },
         }

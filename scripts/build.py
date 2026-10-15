@@ -58,6 +58,12 @@ def bundle():
     manifest["version"] = tomllib.loads(MANIFEST.read_text())["package"]["version"]
     renderer_files = gui.artifacts(ASSETS)
     report = json.loads(renderer_files["nearby-gui-build.json"])
+    renderer_files.update(
+        {
+            "font/" + name: (ROOT / "gui/nearby/assets" / name).read_bytes()
+            for name in ("OFL.txt", "font-source.json")
+        }
+    )
     manifest["gui_version"] = report["mirui"]
     contents = bytearray()
     for entry in manifest["files"]:

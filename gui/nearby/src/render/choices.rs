@@ -59,7 +59,7 @@ pub(super) fn choice(view: &View, metrics: Metrics) -> Entity {
                             width: if metrics.compact { 28 } else { 44 },
                             height: Dimension::percent(100),
                             bg_color: ACCENT_DIM,
-                            font: FONT,
+                            font: font(metrics.title),
                             font_size: metrics.title,
                             text_color: ACCENT,
                             paragraph: paragraph(Center, 1)
@@ -82,7 +82,7 @@ pub(super) fn choice(view: &View, metrics: Metrics) -> Entity {
                         width: Dimension::percent(100),
                         min_width: 0,
                         height: Dimension::Content,
-                        font: FONT,
+                        font: font(metrics.small),
                         font_size: metrics.small,
                         text_color: SECONDARY,
                         paragraph: paragraph(Start, 2)

@@ -5,7 +5,7 @@
 | 组件 | 许可证 | 源码与发布文件 |
 | --- | --- | --- |
 | mirui / mirx 0.48.0 与 Rust 依赖 | 各 crate 声明的 MIT、Apache、BSD、ISC 等许可证 | [锁定依赖记录](../release/rust-dependencies.json)；Release 的 `arkos-nearby-0.4.0-rust-sources.tar.gz` 保存构建使用的原始 crate 归档 |
-| Noto Sans CJK SC 字体 | SIL Open Font License 1.1 | [字体许可证](../gui/nearby/assets/OFL.txt) 与 [来源记录](../gui/nearby/assets/font-source.json) |
+| Fusion Pixel 像素字体 | SIL Open Font License 1.1 | [字体及其衍生来源许可证](../gui/nearby/assets/OFL.txt) 与 [来源记录](../gui/nearby/assets/font-source.json) |
 | RTL8188EU 内核模块 | GPL-2.0 | [许可证](licenses/driver-COPYING.txt)；Release 的 `arkos-kernel-c6b78a0.tar.gz` 提供完整固定 BSP 源码、内核配置和构建文件 |
 | wpa_supplicant 2.10 | BSD | [许可证](licenses/wpa-COPYING.txt)；Release 的 `arkos-nearby-0.4.0-wireless-source.tar.gz` 提供原始归档、广告桥、补丁脚本和配置 |
 | 私有 ARM64 libstdc++ / libgcc | GPL 与 GCC Runtime Library Exception | [许可证和例外](licenses/gcc-runtime-COPYING.txt) 与 [原始源包记录](../release/source.json)；Release 提供 GCC 原始归档、Debian 打包补丁和 `.dsc` |
