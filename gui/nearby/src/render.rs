@@ -14,7 +14,9 @@ mod composition;
 mod copy;
 mod font;
 mod lists;
+mod motion;
 mod pages;
+mod pixel;
 mod selection;
 mod sessions;
 mod state;
@@ -37,10 +39,13 @@ enum Section {
 }
 
 pub fn install<B: Surface, F: RendererFactory<B>>(app: &mut App<B, F>) -> Result<(), String> {
+    app.with_theme(crate::theme::Palette::default().theme());
     app.with_offscreen_pool_budget(2 * 1024 * 1024);
     app.with_widget(page_view::view::<PageKey>());
     app.with_widget(selection::target::view());
     app.with_widget(selection::frame::view());
+    app.with_widget(pixel::sprite::view());
+    app.with_widget(pixel::scenery::view());
     app.with_widget(cache::text_cache::view());
     font::install(app)?;
     state::install(app);
@@ -50,6 +55,7 @@ pub fn install<B: Surface, F: RendererFactory<B>>(app: &mut App<B, F>) -> Result
 pub struct Scene {
     pub loading: bool,
     state: DisplayHandle,
+    pub colors: mirui::ui::theme::Theme,
 }
 
 impl Scene {
@@ -65,6 +71,10 @@ impl Scene {
     pub fn feedback(&self, stamp: Color, activity: [Color; 3]) {
         self.state.feedback(stamp, activity);
     }
+
+    pub fn animate(&self, now: u64, press_sequence: u64) {
+        self.state.animate(now, press_sequence);
+    }
 }
 
 pub fn update(scene: &mut Scene, view: &View) -> Result<(), String> {
@@ -72,6 +82,24 @@ pub fn update(scene: &mut Scene, view: &View) -> Result<(), String> {
     scene.loading = loading(view);
 
     Ok(())
+}
+
+#[cfg(any(target_os = "linux", test))]
+pub fn cycle_theme<B: Surface, F: RendererFactory<B>>(
+    app: &mut App<B, F>,
+    scene: &mut Scene,
+) -> Result<Option<crate::theme::Palette>, String> {
+    use crate::theme::Palette;
+    if !Palette::can_switch(&scene.state.snapshot()) {
+        return Ok(None);
+    }
+    let palette = Palette::parse(scene.colors.id().as_str())
+        .unwrap_or_default()
+        .next();
+    app.set_theme(palette.theme())
+        .map_err(|error| format!("Theme: {error:?}"))?;
+    scene.colors = app.theme().clone();
+    Ok(Some(palette))
 }
 
 pub fn build<B: Surface, F: RendererFactory<B>>(
@@ -84,12 +112,13 @@ pub fn build<B: Surface, F: RendererFactory<B>>(
     };
     let state = app.compose(root, state::display_state());
     state.present(view);
+    state.animate(0, 0);
     state.feedback(
-        ACCENT_DIM,
+        app.theme().resolve(ACCENT_DIM),
         [if loading(view) {
-            ACCENT_DIM
+            app.theme().resolve(ACCENT_DIM)
         } else {
-            BACKGROUND
+            app.theme().resolve(BACKGROUND)
         }; 3],
     );
     if !app.compose(root, has_pages()) {
@@ -99,6 +128,7 @@ pub fn build<B: Surface, F: RendererFactory<B>>(
     Ok(Scene {
         loading: loading(view),
         state,
+        colors: app.theme().clone(),
     })
 }
 

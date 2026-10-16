@@ -111,7 +111,9 @@ class ReleaseContract(unittest.TestCase):
     def test_documented_previews_use_the_installed_renderer_schema(self):
         for path in sorted((ROOT / "docs/screenshots/views").glob("*.json")):
             view = json.loads(path.read_text())
-            self.assertIn(view["page"], {"games", "choice", "rooms", "host", "joined"})
+            self.assertIn(
+                view["page"], {"mode", "games", "choice", "rooms", "host", "joined"}
+            )
             self.assertNotIn("path", view)
             for row in view.get("entries", []) + view.get("rooms", []):
                 self.assertNotIn("path", row)

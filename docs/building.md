@@ -9,7 +9,7 @@
 ## 准备
 
 ```sh
-python3 scripts/build.py prepare /path/to/arkos-nearby-0.4.0-build-assets.tar.gz
+python3 scripts/build.py prepare /path/to/arkos-nearby-0.5.0-build-assets.tar.gz
 cargo +1.92.0 fetch --locked --manifest-path native/nearby/Cargo.toml --target aarch64-unknown-linux-musl
 cargo +1.92.0 fetch --locked --manifest-path gui/nearby/Cargo.toml --target aarch64-unknown-linux-musl
 ```
@@ -46,7 +46,7 @@ CC_aarch64_unknown_linux_musl=/path/to/clang AR_aarch64_unknown_linux_musl=/path
 
 重新生成字库时，将来源记录中的 WOFF 解码为 OpenType 文件，使用 ICU 0.11.1 执行 `icu bake-font nearby-pixel.otf --charset-file gui/nearby/assets/nearby-menu-charset.txt --size 12 --bit-depth 1 --format gray -O /tmp/nearby-font`；将字号改为 24 生成标题字库。将产物分别命名为 `nearby-menu-12.mirx` 和 `nearby-title-24.mirx`，并更新来源记录中的摘要与大小。
 
-SDL2/GLES 候选版的工具链、构建命令及实机检查见 [GPU 界面构建](gpu-rendering.md)。
+发行版使用 SDL2/GLES 界面；静态链接构建命令及显示检查见 [GPU 界面构建](gpu-rendering.md)。`scripts/build.py build` 生成 framebuffer 安装程序。
 
 ```sh
 python3 scripts/build_nearby_gui.py snapshot --view docs/screenshots/views/room-choice.json --output /tmp/arkos-room-choice.png

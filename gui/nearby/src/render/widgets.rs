@@ -1,11 +1,10 @@
 use super::{
-    StaticCache,
+    cache::GpuTextCache,
     state::{DisplayState, TextField},
     style::*,
 };
 use TextAlign::Center;
 use mirui::prelude::*;
-use mirui::ui::OffscreenRender;
 use mirui::ui::widgets::{ParagraphStyle, Text, TextAlign, TextOverflow, TextWrap};
 
 pub(super) fn paragraph(align: TextAlign, lines: u16) -> ParagraphStyle {
@@ -20,7 +19,7 @@ pub(super) fn paragraph(align: TextAlign, lines: u16) -> ParagraphStyle {
 }
 
 #[compose]
-pub(super) fn label(value: &str, size: u16, color: Color, align: TextAlign) -> Entity {
+pub(super) fn label(value: &str, size: u16, color: ColorToken, align: TextAlign) -> Entity {
     ui! {
         Text (
             value.to_owned(),
@@ -35,6 +34,7 @@ pub(super) fn label(value: &str, size: u16, color: Color, align: TextAlign) -> E
             clip_children: true
         ) [
             FONT_PAINT,
+            GpuTextCache,
         ]
     }
 }
@@ -44,7 +44,7 @@ pub(super) fn live_label(
     state: model!(DisplayState),
     field: TextField,
     size: u16,
-    color: Color,
+    color: ColorToken,
     align: TextAlign,
 ) -> Entity {
     ui! {
@@ -61,6 +61,28 @@ pub(super) fn live_label(
             clip_children: true
         ) [
             FONT_PAINT,
+            GpuTextCache,
+        ]
+    }
+}
+
+#[compose]
+pub(super) fn action_label(state: model!(DisplayState), size: u16) -> Entity {
+    ui! {
+        Text (
+            text: ${ state.text(TextField::HostButton) },
+            width: Dimension::percent(100),
+            height: Dimension::Content,
+            min_width: 0,
+            min_height: i32::from(size) + 6,
+            font: font(size),
+            font_size: size,
+            text_color: ${ if state.enabled() { ON_ACCENT } else { FOREGROUND } },
+            paragraph: paragraph(Center, 1),
+            clip_children: true
+        ) [
+            FONT_PAINT,
+            GpuTextCache,
         ]
     }
 }
@@ -85,26 +107,8 @@ pub(super) fn keycap(value: &str, metrics: Metrics) -> Entity {
 }
 
 #[compose]
-pub(super) fn avatar(
-    number: &str,
-    state: model!(DisplayState),
-    own: bool,
-    metrics: Metrics,
-) -> Entity {
+pub(super) fn shadow(metrics: Metrics) -> Entity {
     ui! {
-        Text (
-            number.to_owned(),
-            width: if metrics.compact { 36 } else { 60 },
-            height: if metrics.compact { 36 } else { 60 },
-            bg_color: ${ if own || state.ready() { ACCENT_DIM } else { PANEL } },
-            font: font(metrics.title),
-            font_size: metrics.title,
-            text_color: ${ if own || state.ready() { ACCENT } else { DISABLED } },
-            paragraph: paragraph(Center, 1)
-        ) [
-            FONT_PAINT,
-            StaticCache,
-            OffscreenRender::default(),
-        ]
+        View (height: if metrics.compact { 3 } else { 4 }, shrink: 0.0, bg_color: DIVIDER)
     }
 }

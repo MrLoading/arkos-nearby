@@ -118,4 +118,6 @@ pub enum Action {
     Refresh,
     PageUp,
     PageDown,
+    #[serde(skip)]
+    Theme,
 }

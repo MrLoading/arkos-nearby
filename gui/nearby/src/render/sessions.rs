@@ -1,16 +1,18 @@
+use super::pixel::Kind::Session;
 use super::selection::FocusTarget;
 use super::{
     Section, StaticCache,
+    pixel::{self, Kind, Scenery, art},
     state::{DisplayState, TextField},
     style::*,
-    widgets::{avatar, label, live_label, paragraph},
+    widgets::{action_label, label, live_label, paragraph, shadow},
 };
 use crate::model::View;
-use TextField::{Headline, HostButton, Next, Peer};
+use TextField::{Headline, Next, Peer};
 use mirui::prelude::*;
 use mirui::ui::OffscreenRender;
 use mirui::ui::widgets::Text;
-use mirui::ui::widgets::TextAlign::Center;
+use mirui::ui::widgets::TextAlign::{Center, End, Start};
 
 #[compose]
 pub(super) fn host(_view: &View, state: model!(DisplayState), metrics: Metrics) -> Entity {
@@ -20,87 +22,47 @@ pub(super) fn host(_view: &View, state: model!(DisplayState), metrics: Metrics) 
             min_height: 0,
             row_gap: metrics.gap
         ) {
-            Row (
+            Column (
                 grow: 1.0,
                 min_height: 0,
                 padding: Padding::all(metrics.inset),
                 bg_color: PANEL,
-                align: AlignItems::Center,
-                justify: JustifyContent::Center
+                row_gap: metrics.gap
             ) {
-                Column (
-                    grow: 1.0,
-                    min_width: 0,
-                    align: AlignItems::Center,
-                    justify: JustifyContent::Center,
-                    row_gap: metrics.gap
-                ) {
-                    avatar (
-                        "1",
-                        state,
-                        true,
-                        metrics
-                    )
-                    label (
-                        "你 · 房主",
-                        metrics.body,
-                        FOREGROUND,
-                        Center
-                    )
-                }
-                Row (
-                    width: if metrics.compact { 40 } else { 70 },
-                    justify: JustifyContent::SpaceEvenly,
-                    align: AlignItems::Center
-                ) {
-                    walk 0..3 with _index {
-                        View (
-                            width: 5,
-                            height: 5,
-                            bg_color: ${ if state.ready() { ACCENT } else { DISABLED } }
-                        )
+                View (grow: 1.0, min_height: 56, clip_children: true) [
+                    Scenery::Landscape,
+                    pixel::Sprite {
+                        state: state.clone(),
+                        kind: Kind::Session,
+                    },
+                ]
+                Row (height: 22, shrink: 0.0, column_gap: metrics.gap) {
+                    Column (grow: 1.0, min_width: 0) {
+                        label ("你 · 房主", metrics.body, FOREGROUND, Center)
                     }
-                }
-                Column (
-                    grow: 1.0,
-                    min_width: 0,
-                    align: AlignItems::Center,
-                    justify: JustifyContent::Center,
-                    row_gap: metrics.gap
-                ) {
-                    avatar (
-                        "2",
-                        state,
-                        false,
-                        metrics
-                    )
-                    live_label (
-                        state,
-                        Peer,
-                        metrics.body,
-                        FOREGROUND,
-                        Center
-                    )
+                    Column (grow: 1.0, min_width: 0) {
+                        live_label (state, Peer, metrics.body, FOREGROUND, Center)
+                    }
                 }
             }
             Column (
-                height: if metrics.compact { 34 } else { 50 },
+                height: if metrics.compact { 37 } else { 54 },
                 shrink: 0.0,
-                bg_color: ${ if state.enabled() { ACCENT } else { PANEL } },
-                border_color: ACCENT,
-                border_width: ${ if state.enabled() { 2 } else { 0 } },
-                justify: JustifyContent::Center
-            ) [
-                Section::FocusHost,
-                FocusTarget { index: 0 },
-            ] {
-                live_label (
-                    state,
-                    HostButton,
-                    metrics.title,
-                    BACKGROUND,
-                    Center
-                )
+                transform: ${ state.motion().card_transform(0) }
+            ) {
+                Column (
+                    grow: 1.0,
+                    bg_color: ${ if state.enabled() { ACCENT } else { PANEL } },
+                    border_color: ACCENT,
+                    border_width: ${ if state.enabled() { 2 } else { 0 } },
+                    justify: JustifyContent::Center
+                ) [
+                    Section::FocusHost,
+                    FocusTarget { index: 0 },
+                ] {
+                    action_label (state, metrics.title)
+                }
+                shadow (metrics)
             }
         }
     }
@@ -113,53 +75,102 @@ pub(super) fn network_panel(_view: &View, state: model!(DisplayState), metrics: 
             Column (
                 grow: 1.0,
                 min_height: 0,
-                padding: Padding::all(metrics.inset),
+                padding: Padding::all(8),
                 bg_color: PANEL,
                 justify: JustifyContent::Center,
                 row_gap: metrics.gap
             ) {
-                live_label (state, Headline, metrics.title, FOREGROUND, Center)
-                Text (
-                    text: ${ state.address() },
-                    font: font(metrics.body),
-                    font_size: metrics.body,
-                    text_color: SECONDARY,
-                    height: Dimension::Content,
-                    paragraph: paragraph(Center, 1)
-                ) [
-                    FONT_PAINT,
-                ]
-                Text (
-                    text: ${ state.peers() },
-                    width: Dimension::percent(100),
-                    min_width: 0,
-                    height: Dimension::Content,
-                    font: font(metrics.small),
-                    font_size: metrics.small,
-                    text_color: SECONDARY,
-                    paragraph: paragraph(Center, 3),
-                    clip_children: true
-                ) [
-                    FONT_PAINT,
-                ]
+                Row (
+                    height: if metrics.compact { 24 } else { 32 },
+                    shrink: 0.0,
+                    align: AlignItems::Center,
+                    column_gap: metrics.gap
+                ) {
+                    Column (grow: 1.0, min_width: 0) {
+                        live_label (state, Headline, metrics.title, FOREGROUND, Start)
+                    }
+                    View (
+                        width: 120,
+                        shrink: 0.0,
+                        height: Dimension::percent(100),
+                        clip_children: true
+                    ) [
+                        pixel::Sprite {
+                            state: state.clone(),
+                            kind: Kind::Session,
+                        },
+                    ]
+                }
+                Column (grow: 1.0, min_height: 0, justify: JustifyContent::Center) {
+                    match ${ state.devices() } {
+                        rows => {
+                            network_devices (&rows, metrics)
+                        }
+                    }
+                }
                 live_label (state, Next, metrics.small, SECONDARY, Center)
             }
             Column (
-                height: if metrics.compact { 34 } else { 50 },
+                height: if metrics.compact { 37 } else { 54 },
                 shrink: 0.0,
-                bg_color: ${ if state.enabled() { ACCENT } else { PANEL } },
-                justify: JustifyContent::Center
-            ) [
-                Section::FocusHost,
-                FocusTarget { index: 0 },
-            ] {
-                live_label (
-                    state,
-                    HostButton,
-                    metrics.title,
-                    BACKGROUND,
-                    Center
-                )
+                transform: ${ state.motion().card_transform(0) }
+            ) {
+                Column (
+                    grow: 1.0,
+                    bg_color: ${ if state.enabled() { ACCENT } else { PANEL } },
+                    justify: JustifyContent::Center
+                ) [
+                    Section::FocusHost,
+                    FocusTarget { index: 0 },
+                ] {
+                    action_label (state, metrics.title)
+                }
+                shadow (metrics)
+            }
+        }
+    }
+}
+
+#[compose]
+fn network_devices(rows: &[crate::model::NetworkPeer], metrics: Metrics) -> Entity {
+    ui! {
+        Column (grow: 1.0, min_height: 0, justify: JustifyContent::Center) {
+            walk rows.iter() with device {
+                Row (
+                    height: if metrics.compact { 20 } else { 22 },
+                    shrink: 0.0,
+                    align: AlignItems::Center,
+                    column_gap: metrics.inset
+                ) {
+                    Text (
+                        device.name.clone(),
+                        grow: 1.0,
+                        min_width: 0,
+                        height: 18,
+                        font: font(metrics.body),
+                        font_size: metrics.body,
+                        text_color: FOREGROUND,
+                        paragraph: paragraph(Start, 1),
+                        clip_children: true
+                    ) [
+                        FONT_PAINT,
+                        super::cache::GpuTextCache,
+                    ]
+                    Text (
+                        device.address.clone(),
+                        width: Dimension::Content,
+                        shrink: 0.0,
+                        height: 18,
+                        font: font(metrics.body),
+                        font_size: metrics.body,
+                        text_color: SECONDARY,
+                        paragraph: paragraph(End, 1)
+                    ) [
+                        FONT_PAINT,
+                        super::cache::GpuTextCache,
+                    ]
+                }
+                View (height: 1, shrink: 0.0, bg_color: DIVIDER)
             }
         }
     }
@@ -212,9 +223,14 @@ pub(super) fn joined(_view: &View, state: model!(DisplayState), metrics: Metrics
             }
             View (
                 grow: 1.0,
-                min_height: 0,
-                max_height: 24
-            )
+                min_height: if metrics.compact { 32 } else { 64 },
+                clip_children: true
+            ) [
+                pixel::Sprite {
+                    state: state.clone(),
+                    kind: Kind::Session,
+                },
+            ]
             live_label (
                 state,
                 Headline,
@@ -257,18 +273,7 @@ pub(super) fn leaving(state: model!(DisplayState), metrics: Metrics) -> Entity {
             justify: JustifyContent::Center,
             align: AlignItems::Center
         ) {
-            Text (
-                "B",
-                width: 44,
-                height: 36,
-                bg_color: ACCENT_DIM,
-                font: font(metrics.title),
-                font_size: metrics.title,
-                text_color: ACCENT,
-                paragraph: paragraph(Center, 1)
-            ) [
-                FONT_PAINT,
-            ]
+            art (state, Session, if metrics.compact { 56 } else { 120 })
             live_label (
                 state,
                 Headline,

@@ -1,6 +1,7 @@
 use super::{
     Section, StaticCache,
     cache::GpuTextCache,
+    pixel::Scenery,
     state::DisplayState,
     style::*,
     widgets::{keycap, label, paragraph},
@@ -22,38 +23,30 @@ pub(super) fn header(view: &View, state: model!(DisplayState), metrics: Metrics)
     };
     ui! {
         Row (
-            height: if metrics.compact { 44 } else { 68 },
+            height: if metrics.tiny { 44 } else if metrics.compact { 52 } else { 88 },
             shrink: 0.0,
             column_gap: metrics.gap + 4,
+            padding: Padding {
+                top: 4.into(),
+                bottom: 4.into(),
+                left: (if metrics.compact { 16 } else { 24 }).into(),
+                right: (if metrics.compact { 16 } else { 24 }).into(),
+            },
+            bg_color: DEEP,
             align: AlignItems::Center
         ) [
             Section::Header,
+            Scenery::Header,
         ] {
-            Row (
-                width: if metrics.compact { 30 } else { 42 },
-                height: if metrics.compact { 30 } else { 42 },
-                shrink: 0.0,
-                bg_color: ${ state.stamp() },
-                justify: JustifyContent::Center,
-                align: AlignItems::Center,
-                border_radius: 0
-            ) {
-                View (
-                    width: 7,
-                    height: 18,
-                    bg_color: ACCENT
-                )
-                View (
-                    width: 7,
-                    height: 6,
-                    bg_color: ACCENT
-                )
-                View (
-                    width: 7,
-                    height: 18,
-                    bg_color: ACCENT
-                )
-            }
+            View (
+                width: if metrics.compact { 30 } else { 48 },
+                height: if metrics.compact { 30 } else { 48 },
+                shrink: 0.0
+            ) [
+                Scenery::Logo,
+                StaticCache,
+                OffscreenRender::default(),
+            ]
             Column (
                 grow: 1.0,
                 min_width: 0,
@@ -65,15 +58,15 @@ pub(super) fn header(view: &View, state: model!(DisplayState), metrics: Metrics)
             ] {
                 label (
                     "附近联机",
-                    TITLE_SIZE,
-                    FOREGROUND,
+                    metrics.title,
+                    HEADER_TEXT,
                     Start
                 )
                 Text (
                     text: ${ state.subtitle() },
                     font: font(metrics.small),
                     font_size: metrics.small,
-                    text_color: SECONDARY,
+                    text_color: HEADER_DETAIL,
                     height: Dimension::Content,
                     paragraph: paragraph(Start, 1)
                 ) [
@@ -85,10 +78,10 @@ pub(super) fn header(view: &View, state: model!(DisplayState), metrics: Metrics)
                 width: if metrics.compact { 76 } else { 96 },
                 height: if metrics.compact { 26 } else { 34 },
                 shrink: 0.0,
-                bg_color: PANEL,
+                bg_color: DEEP,
                 font: font(metrics.small),
                 font_size: metrics.small,
-                text_color: SECONDARY,
+                text_color: HEADER_DETAIL,
                 paragraph: paragraph(Center, 1)
             ) [
                 FONT_PAINT,
@@ -115,10 +108,10 @@ pub(super) fn footer(view: &View, state: model!(DisplayState), metrics: Metrics)
                 width: if metrics.compact { 20 } else { 25 },
                 height: if metrics.compact { 20 } else { 25 },
                 shrink: 0.0,
-                bg_color: ${ if state.confirm_visible() { PANEL } else { BACKGROUND } },
+                bg_color: ${ if state.confirm_visible() { ACCENT } else { BACKGROUND } },
                 font: font(metrics.small),
                 font_size: metrics.small,
-                text_color: SECONDARY,
+                text_color: ON_ACCENT,
                 paragraph: paragraph(Center, 1)
             ) [
                 FONT_PAINT,
@@ -158,6 +151,21 @@ pub(super) fn footer(view: &View, state: model!(DisplayState), metrics: Metrics)
                     text_color: SECONDARY,
                     paragraph: paragraph(Start, 1),
                     clip_children: true
+                ) [
+                    FONT_PAINT,
+                ]
+            }
+            if matches!(view.page, Page::Mode | Page::Choice) {
+                keycap ("Y", metrics)
+                Text (
+                    "主题",
+                    width: Dimension::Content,
+                    height: Dimension::Content,
+                    shrink: 0.0,
+                    font: font(metrics.small),
+                    font_size: metrics.small,
+                    text_color: SECONDARY,
+                    paragraph: paragraph(Start, 1)
                 ) [
                     FONT_PAINT,
                 ]

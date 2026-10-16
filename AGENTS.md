@@ -12,7 +12,7 @@ Keep one MenuSession for the entire Options interaction. menu/display.rs owns th
 
 Public documentation describes current behavior and measured compatibility. Renderer snapshots illustrate the interface; metadata checks and synthetic captures do not establish game-specific multiplayer acceptance. Code and comments use English. Markdown paragraphs use one physical line each.
 
-The optional GPU interface uses the same scene composition through Surface and RendererFactory. scripts/build_nearby_gpu.py builds the locked mirui 0.50.0 registry packages for ARM64 GNU under /tmp/arkos-rust-build. Keep private SDL libraries scoped to the candidate directory, retain transient backbuffer rendering, and record hardware acceptance separately from compilation. The default installer retains its framebuffer interface until GPU deployment is verified.
+The released GPU interface uses the same scene composition through Surface and RendererFactory, with SDL2 2.32.10 linked statically. scripts/build_nearby_gpu.py supports a separate dynamic-library build. Keep shared SDL libraries scoped to their output directory, retain transient backbuffer rendering, and record hardware acceptance separately from compilation. Framebuffer builds remain available through scripts/build_nearby_gui.py.
 
 README and release notes cover the actual product and its installation/play workflow. Keep conversation constraints and rejected proposals in agent instructions. Prefer concrete requirements and compatibility results over hypothetical contrasts or absence/guarantee disclaimers. Use a concise introduction, useful badges, interface previews and a short quick start.
 

@@ -2,7 +2,7 @@
 
 ## 下载与校验
 
-两台掌机安装同一个版本。下载 [arkos-nearby-0.4.0-arm64.tar.gz](https://github.com/W-Mai/arkos-nearby/releases/download/v0.4.0/arkos-nearby-0.4.0-arm64.tar.gz) 和 [SHA256SUMS](https://github.com/W-Mai/arkos-nearby/releases/download/v0.4.0/SHA256SUMS)。在下载目录执行 `sha256sum --ignore-missing -c SHA256SUMS`；macOS 可使用 `shasum -a 256 -c SHA256SUMS` 并只核对实际下载的文件。
+两台掌机安装同一个版本。下载 [arkos-nearby-0.5.0-arm64.tar.gz](https://github.com/W-Mai/arkos-nearby/releases/download/v0.5.0/arkos-nearby-0.5.0-arm64.tar.gz) 和 [SHA256SUMS](https://github.com/W-Mai/arkos-nearby/releases/download/v0.5.0/SHA256SUMS)。在下载目录执行 `sha256sum --ignore-missing -c SHA256SUMS`；macOS 可使用 `shasum -a 256 -c SHA256SUMS` 并只核对实际下载的文件。
 
 解压后包含 `arkos-nearby`、`Install Nearby Multiplayer.sh`、安装说明、许可证和可执行文件校验值。
 
@@ -11,6 +11,8 @@
 将解压出的 `arkos-nearby` 文件夹复制到游戏卡的 `ports` 目录。在掌机的 Ports 中打开 `Install Nearby Multiplayer.sh`。程序与脚本必须放在同一目录。安装器检查实际内核、无线芯片、屏幕、系统工具和启动脚本结构，通过后安装应用并添加手动入口。
 
 安装完成后，Options 中的 Nearby Multiplayer 提供「仅组网」和「选择游戏」两个入口。也可以在游戏开始加载前按住 X，进入当前游戏的联机界面。
+
+在选择模式或创建／加入房间的入口页按 Y 切换松林、落日和夜营主题。配色会自动保存。
 
 ## 仅组网
 

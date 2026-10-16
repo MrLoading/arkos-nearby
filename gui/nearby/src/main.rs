@@ -3,6 +3,7 @@ mod model;
 #[cfg(target_os = "linux")]
 mod platform;
 mod render;
+mod theme;
 
 use mirui::prelude::*;
 use mirui::render::texture::ColorFormat;
@@ -99,6 +100,13 @@ fn snapshot(
     let mut app = App::new(surface);
     app.with_default_widgets().with_default_systems();
     render::install(&mut app)?;
+    if let Some(palette) = std::env::var("ARKOS_NEARBY_THEME")
+        .ok()
+        .and_then(|value| theme::Palette::parse(&value))
+    {
+        app.set_theme(palette.theme())
+            .map_err(|error| format!("Theme: {error:?}"))?;
+    }
     let scene = render::draw(&mut app, &view)?;
     if let Some(now) = time_ms {
         let mut motion = feedback::Feedback::default();
@@ -273,6 +281,8 @@ fn live() -> Result<(), String> {
         .map_err(|error| error.to_string())?;
     render::install(&mut app)?;
     app.add_plugin(mirui::app::plugins::StdInstantClockPlugin);
+    app.set_theme(theme::Palette::load(Path::new(theme::SETTINGS)).theme())
+        .map_err(|error| format!("Theme: {error:?}"))?;
     platform::record_init("after_fonts", serde_json::json!({}))
         .map_err(|error| error.to_string())?;
     let mut view: Option<model::View> = None;
@@ -338,6 +348,16 @@ fn live() -> Result<(), String> {
             }
         }
         for action in terminal.poll().map_err(|e| e.to_string())? {
+            if matches!(action, model::Action::Theme) {
+                if let Some(scene) = scene.as_mut() {
+                    if let Some(palette) = render::cycle_theme(&mut app, scene)? {
+                        if let Err(error) = palette.save(Path::new(theme::SETTINGS)) {
+                            eprintln!("Theme preference: {error}");
+                        }
+                    }
+                }
+                continue;
+            }
             if let Some(scene) = scene.as_ref() {
                 match action {
                     model::Action::Back => scene.navigation_intent(true),

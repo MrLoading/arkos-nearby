@@ -16,8 +16,8 @@ pub(super) enum TextField {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) struct StepColors {
-    pub(super) background: Color,
-    pub(super) foreground: Color,
+    pub(super) background: ColorToken,
+    pub(super) foreground: ColorToken,
 }
 
 pub(super) fn publish<T: Clone + PartialEq>(signal: &Signal<T>, value: T) {
@@ -32,8 +32,7 @@ pub(super) struct DisplayState {
     direction: PageDirection,
     rooms: Signal<Vec<(usize, crate::model::RoomRow)>>,
     entries: Signal<Vec<crate::model::GameRow>>,
-    address: Signal<String>,
-    peers: Signal<String>,
+    devices: Signal<Vec<crate::model::NetworkPeer>>,
     room_name: Signal<String>,
     heading: Signal<String>,
     subtitle: Signal<String>,
@@ -53,6 +52,9 @@ pub(super) struct DisplayState {
     pub(super) stamp: Color,
     #[observe]
     pub(super) activity: [Color; 3],
+    timeline: super::motion::Timeline,
+    #[observe]
+    pub(super) motion: super::motion::Frame,
 }
 
 #[model]
@@ -85,7 +87,7 @@ impl DisplayState {
             if active == Some(index) {
                 StepColors {
                     background: ACCENT,
-                    foreground: BACKGROUND,
+                    foreground: ON_ACCENT,
                 }
             } else if active.is_some_and(|step| index < step) {
                 StepColors {
@@ -114,22 +116,16 @@ impl DisplayState {
         publish(&self.rooms, rows);
         let entries: Vec<_> = view.entries.iter().take(4).cloned().collect();
         publish(&self.entries, entries);
-        publish(
-            &self.address,
-            if view.local_address.is_empty() {
+        let mut devices = vec![crate::model::NetworkPeer {
+            name: "本机".into(),
+            address: if view.local_address.is_empty() {
                 "等待分配地址".into()
             } else {
-                format!("本机  {}", view.local_address)
+                view.local_address.clone()
             },
-        );
-        publish(
-            &self.peers,
-            view.peers
-                .iter()
-                .map(|peer| format!("{}  {}", peer.name, peer.address))
-                .collect::<Vec<_>>()
-                .join("\n"),
-        );
+        }];
+        devices.extend(view.peers.iter().cloned());
+        publish(&self.devices, devices);
         publish(&self.room_name, view.room_name.clone());
         publish(&self.heading, page_heading(view).into());
         publish(
@@ -150,11 +146,8 @@ impl DisplayState {
     pub(super) fn entries(&self) -> Vec<crate::model::GameRow> {
         self.entries.get()
     }
-    pub(super) fn address(&self) -> String {
-        self.address.get()
-    }
-    pub(super) fn peers(&self) -> String {
-        self.peers.get()
+    pub(super) fn devices(&self) -> Vec<crate::model::NetworkPeer> {
+        self.devices.get()
     }
     pub(super) fn room_name(&self) -> String {
         self.room_name.get()
@@ -249,6 +242,13 @@ impl DisplayState {
         self.stamp = stamp;
         self.activity = activity;
     }
+
+    pub(super) fn animate(&mut self, now: u64, press_sequence: u64) {
+        let selected = self.selected();
+        self.motion = self
+            .timeline
+            .sample(&self.view, selected, now, press_sequence);
+    }
 }
 
 pub(super) type DisplayHandle = <DisplayState as mirui::core::model::Model>::Handle;
@@ -281,8 +281,7 @@ pub(super) fn install<B: Surface, F: RendererFactory<B>>(app: &mut App<B, F>) {
             direction: PageDirection::Forward,
             rooms: Signal::new(Vec::new()),
             entries: Signal::new(Vec::new()),
-            address: Signal::new(String::new()),
-            peers: Signal::new(String::new()),
+            devices: Signal::new(Vec::new()),
             room_name: Signal::new(String::new()),
             heading: Signal::new(String::new()),
             subtitle: Signal::new(String::new()),
@@ -299,8 +298,10 @@ pub(super) fn install<B: Surface, F: RendererFactory<B>>(app: &mut App<B, F>) {
                 background: PANEL,
                 foreground: DISABLED,
             }; 3],
-            stamp: ACCENT_DIM,
-            activity: [BACKGROUND; 3],
+            stamp: app.theme().resolve(ACCENT_DIM),
+            activity: [app.theme().resolve(BACKGROUND); 3],
+            timeline: super::motion::Timeline::default(),
+            motion: super::motion::Frame::default(),
         })
         .finish();
     app.add_system(selection::update::system(state.clone()));

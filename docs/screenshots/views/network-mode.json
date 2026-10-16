@@ -1,0 +1,14 @@
+{
+  "page": "mode",
+  "title": "附近联机",
+  "core": "",
+  "selected": 0,
+  "entries": [],
+  "rooms": [],
+  "room_name": "",
+  "ready": false,
+  "busy": false,
+  "status": "",
+  "phase": "idle",
+  "back_label": "返回系统"
+}

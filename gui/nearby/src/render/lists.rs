@@ -1,43 +1,46 @@
+use super::pixel::Kind::Search;
 use super::selection::FocusTarget;
 use super::{
-    Section, StaticCache,
+    Section,
+    pixel::{self, Kind, Scenery, art},
     state::DisplayState,
     style::*,
     widgets::{label, paragraph},
 };
 use mirui::prelude::*;
-use mirui::ui::OffscreenRender;
 use mirui::ui::widgets::Text;
 use mirui::ui::widgets::TextAlign::{Center, Start};
 
 #[compose]
-pub(super) fn room_signal(strength: u8, available: bool) -> Entity {
+pub(super) fn room_signal(
+    state: model!(DisplayState),
+    index: usize,
+    strength: u8,
+    available: bool,
+) -> Entity {
     ui! {
-        Row (
-            width: 30,
-            height: 24,
-            shrink: 0.0,
-            column_gap: 3,
-            align: AlignItems::FlexEnd
-        ) {
-            walk 0..4 with index {
-                View (
-                    width: 4,
-                    height: 6 + index * 4,
-                    bg_color: if available && strength as i32 > index * 25 { ACCENT } else { DIVIDER }
-                )
-            }
-        }
+        View (width: 30, height: 30, shrink: 0.0) [
+            pixel::Sprite {
+                state: state.clone(),
+                kind: Kind::Signal {
+                    index,
+                    strength,
+                    available,
+                },
+            },
+        ]
     }
 }
 
 #[compose]
 pub(super) fn rooms(state: model!(DisplayState), metrics: Metrics) -> Entity {
     ui! {
-        Column (grow: 1.0, min_height: 0) {
+        Column (grow: 1.0, min_height: 0) [
+            Scenery::Ridge,
+        ] {
             match ${ state.rooms() } {
                 rows => {
-                    room_rows (&rows, metrics)
+                    room_rows (&rows, state, metrics)
                 }
             }
         }
@@ -45,7 +48,11 @@ pub(super) fn rooms(state: model!(DisplayState), metrics: Metrics) -> Entity {
 }
 
 #[compose]
-pub(super) fn room_rows(rows: &[(usize, crate::model::RoomRow)], metrics: Metrics) -> Entity {
+pub(super) fn room_rows(
+    rows: &[(usize, crate::model::RoomRow)],
+    state: model!(DisplayState),
+    metrics: Metrics,
+) -> Entity {
     ui! {
         Column (
             grow: 1.0,
@@ -53,8 +60,6 @@ pub(super) fn room_rows(rows: &[(usize, crate::model::RoomRow)], metrics: Metric
             row_gap: metrics.gap
         ) [
             Section::FocusList,
-            StaticCache,
-            OffscreenRender::default(),
         ] {
             if rows.is_empty() {
                 Column (
@@ -64,6 +69,7 @@ pub(super) fn room_rows(rows: &[(usize, crate::model::RoomRow)], metrics: Metric
                     justify: JustifyContent::Center,
                     row_gap: metrics.gap
                 ) {
+                    art (state, Search, if metrics.compact { 48 } else { 88 })
                     label (
                         "正在搜索附近的房间",
                         metrics.title,
@@ -83,14 +89,15 @@ pub(super) fn room_rows(rows: &[(usize, crate::model::RoomRow)], metrics: Metric
                     ]
                 }
             } else {
-                walk rows.iter() with item {
+                walk rows.iter().cloned() with item {
                     Row (
                         grow: 1.0,
                         min_height: i32::from(metrics.row_title + metrics.row_detail) + 17,
                         max_height: if metrics.compact { 42 } else { 70 },
                         padding: Padding::all(2),
                         column_gap: metrics.gap,
-                        bg_color: PANEL,
+                        bg_color: ${ state.motion().card_color(item.0) },
+                        transform: ${ state.motion().card_transform(item.0) },
                         align: AlignItems::Center,
                         clip_children: true
                     ) [
@@ -119,6 +126,8 @@ pub(super) fn room_rows(rows: &[(usize, crate::model::RoomRow)], metrics: Metric
                             )
                         }
                         room_signal (
+                            state,
+                            item.0,
                             item.1.signal,
                             item.1.available
                         )
@@ -139,7 +148,7 @@ pub(super) fn games(state: model!(DisplayState), metrics: Metrics) -> Entity {
         Column (grow: 1.0, min_height: 0) {
             match ${ state.entries() } {
                 rows => {
-                    game_rows (&rows, metrics)
+                    game_rows (&rows, state, metrics)
                 }
             }
         }
@@ -147,7 +156,11 @@ pub(super) fn games(state: model!(DisplayState), metrics: Metrics) -> Entity {
 }
 
 #[compose]
-pub(super) fn game_rows(rows: &[crate::model::GameRow], metrics: Metrics) -> Entity {
+pub(super) fn game_rows(
+    rows: &[crate::model::GameRow],
+    state: model!(DisplayState),
+    metrics: Metrics,
+) -> Entity {
     ui! {
         Column (
             grow: 1.0,
@@ -155,8 +168,6 @@ pub(super) fn game_rows(rows: &[crate::model::GameRow], metrics: Metrics) -> Ent
             row_gap: metrics.gap
         ) [
             Section::FocusList,
-            StaticCache,
-            OffscreenRender::default(),
         ] {
             if rows.is_empty() {
                 Column (
@@ -180,7 +191,8 @@ pub(super) fn game_rows(rows: &[crate::model::GameRow], metrics: Metrics) -> Ent
                         max_height: if metrics.compact { 42 } else { 70 },
                         padding: Padding::all(2),
                         column_gap: metrics.gap,
-                        bg_color: PANEL,
+                        bg_color: ${ state.motion().card_color(item.0) },
+                        transform: ${ state.motion().card_transform(item.0) },
                         align: AlignItems::Center,
                         clip_children: true
                     ) [

@@ -41,8 +41,7 @@ fn page_contents(view: &View, state: model!(DisplayState), metrics: Metrics) -> 
             position: Position::Absolute,
             width: 0,
             height: 0,
-            border_color: ACCENT,
-            border_width: 2
+            border_width: 0
         ) [
             mirui::ui::IgnoreHitTest,
             selection::SelectionFrame {
@@ -50,7 +49,35 @@ fn page_contents(view: &View, state: model!(DisplayState), metrics: Metrics) -> 
                 page: state.page_key(),
                 state: state.clone(),
             },
-        ]
+        ] {
+            View (
+                position: Position::Absolute,
+                left: ${
+                    Dimension::Percent(
+                        Fixed::from_f32(-state.motion().expansion().0 as f32 * 100.0 / 276.0),
+                    )
+                },
+                width: ${
+                    Dimension::Percent(
+                        Fixed::from_f32(100.0 + state.motion().expansion().0 as f32 * 200.0 / 276.0),
+                    )
+                },
+                top: ${
+                    Dimension::Percent(
+                        Fixed::from_f32(-state.motion().expansion().1 as f32 * 100.0 / 196.0),
+                    )
+                },
+                height: ${
+                    Dimension::Percent(
+                        Fixed::from_f32(100.0 + state.motion().expansion().1 as f32 * 200.0 / 196.0),
+                    )
+                },
+                border_color: ACCENT,
+                border_width: 2
+            ) [
+                mirui::ui::IgnoreHitTest,
+            ]
+        }
     }
 }
 

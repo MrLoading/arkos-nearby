@@ -13,19 +13,27 @@ pub(super) fn font(size: u16) -> FontToken {
         _ => unreachable!("Pixel text requires a native font size"),
     }
 }
-pub(super) const BACKGROUND: Color = Color::rgb(242, 235, 221);
-pub(super) const PANEL: Color = Color::rgb(231, 221, 200);
-pub(super) const ACCENT: Color = Color::rgb(166, 61, 50);
-pub(super) const ACCENT_DIM: Color = Color::rgb(234, 207, 192);
-pub(super) const FOREGROUND: Color = Color::rgb(41, 37, 32);
-pub(super) const SECONDARY: Color = Color::rgb(112, 98, 83);
-pub(super) const DISABLED: Color = Color::rgb(131, 117, 99);
-pub(super) const DIVIDER: Color = Color::rgb(204, 192, 169);
-pub(super) const WARNING: Color = Color::rgb(152, 106, 32);
-pub(super) const WARNING_PANEL: Color = Color::rgb(233, 218, 186);
+pub(super) const BACKGROUND: ColorToken = ColorToken::Surface;
+pub(super) const FOREGROUND: ColorToken = ColorToken::OnSurface;
+pub(super) const ACCENT: ColorToken = ColorToken::Primary;
+pub(super) const ON_ACCENT: ColorToken = ColorToken::OnPrimary;
+pub(super) const PANEL: ColorToken = ColorToken::SurfaceVariant;
+pub(super) const SECONDARY: ColorToken = ColorToken::OnSurfaceVariant;
+pub(super) const DISABLED: ColorToken = SECONDARY;
+pub(super) const DIVIDER: ColorToken = ColorToken::Outline;
+pub(super) const ACCENT_DIM: ColorToken = ColorToken::Custom("sky");
+pub(super) const WARNING: ColorToken = ColorToken::Custom("gold");
+pub(super) const WARNING_PANEL: ColorToken = PANEL;
+pub(super) const CLAY: ColorToken = ColorToken::Custom("clay");
+pub(super) const SKY: ColorToken = ColorToken::Custom("sky");
+pub(super) const HILL: ColorToken = ColorToken::Custom("hill");
+pub(super) const DEEP: ColorToken = ColorToken::Custom("deep");
+pub(super) const HEADER_TEXT: ColorToken = ColorToken::Custom("header-text");
+pub(super) const HEADER_DETAIL: ColorToken = ColorToken::Custom("header-detail");
 #[derive(Clone, Copy)]
 pub(super) struct Metrics {
     pub(super) compact: bool,
+    pub(super) tiny: bool,
     pub(super) title: u16,
     pub(super) body: u16,
     pub(super) small: u16,
@@ -40,6 +48,7 @@ impl Metrics {
         let compact = height < 400;
         Self {
             compact,
+            tiny: height < 300,
             title: if compact { 12 } else { TITLE_SIZE },
             body: 12,
             small: 12,

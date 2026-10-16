@@ -17,6 +17,37 @@ use std::rc::Rc;
 
 type TestApp = App<FramebufSurface<fn(&[u8], PhysicalRect)>>;
 
+#[test]
+fn theme_changes_preserve_scene_state_and_refresh_cached_pixels() {
+    for size in [[320, 240], [640, 480]] {
+        let mut app = app(size);
+        let mut current = view(Page::Choice);
+        current.selected = 1;
+        let mut scene = draw(&mut app, &current).unwrap();
+        let root = app.root;
+        let page = body(&app);
+        let mut feedback = Feedback::default();
+        paint_at(&mut app, &mut feedback, &scene, 1000);
+        let selection = focus_rect(&app);
+        for index in 1..=3 {
+            assert!(cycle_theme(&mut app, &mut scene).unwrap().is_some());
+            paint_at(&mut app, &mut feedback, &scene, 1000 + index * 100);
+            assert_eq!(app.root, root);
+            assert_eq!(body(&app), page);
+            assert_eq!(focus_rect(&app), selection);
+            assert_eq!(scene.state.snapshot(), current);
+            assert_full_frame_matches(&mut app, "theme switch invalidates all cached colors");
+        }
+        current.busy = true;
+        update(&mut scene, &current).unwrap();
+        assert!(cycle_theme(&mut app, &mut scene).unwrap().is_none());
+        current.busy = false;
+        current.page = Page::Host;
+        update(&mut scene, &current).unwrap();
+        assert!(cycle_theme(&mut app, &mut scene).unwrap().is_none());
+    }
+}
+
 thread_local! { static TIME: Cell<u64> = const { Cell::new(0) }; }
 
 fn now_ns() -> u64 {
@@ -294,6 +325,9 @@ fn responsive_layout_keeps_focus_and_text_sections_inside_the_viewport() {
             view.title = "较长的游戏标题 / A long multiplayer game title that should fit its available space".into();
             let _scene = draw(&mut app, &view).unwrap();
             let header = rect(&app, "nearby_header");
+            assert_eq!(header.x, Fixed::ZERO, "Header must span the viewport");
+            assert_eq!(header.y, Fixed::ZERO, "Header must start at the top edge");
+            assert_eq!(header.w, Fixed::from_int(i32::from(size[0])));
             let body = rect(&app, "nearby_content");
             let footer = rect(&app, "nearby_footer");
             let status = rect(&app, "nearby_status");
@@ -352,6 +386,44 @@ fn network_status_keeps_connection_actions_inside_the_viewport() {
             assert!(x + w <= i32::from(size[0]) && y + h <= footer.y.to_int());
             assert!(footer.y + footer.h <= Fixed::from_int(i32::from(size[1])));
             assert_eq!(confirm_text(&view), "返回系统");
+            let text_rect = |value: &str| {
+                let entity = app
+                    .world
+                    .query::<Text>()
+                    .iter()
+                    .find(|(_, text)| text.resolve(app.world.resource()).as_ref() == value)
+                    .unwrap_or_else(|| panic!("Missing device text: {value}"))
+                    .0;
+                app.world.get::<ComputedRect>(entity).unwrap().0
+            };
+            let local = text_rect(&view.local_address);
+            let hint = text_rect(next_step(&view));
+            let mut previous_bottom = Fixed::ZERO;
+            for (name, address) in std::iter::once(("本机", view.local_address.as_str())).chain(
+                view.peers
+                    .iter()
+                    .map(|peer| (peer.name.as_str(), peer.address.as_str())),
+            ) {
+                let name = text_rect(name);
+                let address = text_rect(address);
+                assert_eq!(name.y, address.y, "Device name and address share a row");
+                assert_eq!(
+                    local.x + local.w,
+                    address.x + address.w,
+                    "Addresses align right"
+                );
+                assert!(name.x + name.w < address.x, "Columns remain separate");
+                assert!(address.y >= previous_bottom, "Device rows never overlap");
+                assert!(
+                    address.y + address.h < Fixed::from_int(y),
+                    "Addresses stay above actions: {size:?} {page:?} {address:?} action_y={y}"
+                );
+                assert!(
+                    address.y + address.h <= hint.y,
+                    "Addresses stay above the connection hint"
+                );
+                previous_bottom = address.y + address.h;
+            }
         }
     }
 }
@@ -694,6 +766,64 @@ fn menu_handoffs_animate_without_blank_frames_in_panel_formats() {
                 assert_full_frame_matches(&mut app, "continuous menu handoff");
             }
             assert_eq!(page_frames(&app).len(), 1);
+        }
+    }
+}
+
+#[test]
+fn palettes_define_all_roles_and_legible_action_text() {
+    use super::style::*;
+    use crate::theme::Palette;
+    fn luminance(color: Color) -> f64 {
+        [color.r, color.g, color.b]
+            .into_iter()
+            .zip([0.2126, 0.7152, 0.0722])
+            .map(|(value, weight)| {
+                let value = f64::from(value) / 255.0;
+                weight
+                    * if value <= 0.04045 {
+                        value / 12.92
+                    } else {
+                        ((value + 0.055) / 1.055).powf(2.4)
+                    }
+            })
+            .sum()
+    }
+    for palette in Palette::ALL {
+        let theme = palette.theme();
+        for token in [
+            BACKGROUND,
+            FOREGROUND,
+            ACCENT,
+            ON_ACCENT,
+            PANEL,
+            SECONDARY,
+            DISABLED,
+            DIVIDER,
+            ACCENT_DIM,
+            WARNING,
+            WARNING_PANEL,
+            CLAY,
+            SKY,
+            HILL,
+            DEEP,
+            HEADER_TEXT,
+            HEADER_DETAIL,
+        ] {
+            assert_ne!(theme.resolve(token), Color::rgb(255, 0, 255));
+        }
+        for (foreground, background) in [
+            (FOREGROUND, BACKGROUND),
+            (FOREGROUND, PANEL),
+            (ON_ACCENT, ACCENT),
+            (HEADER_TEXT, DEEP),
+        ] {
+            let a = luminance(theme.resolve(foreground));
+            let b = luminance(theme.resolve(background));
+            assert!(
+                (a.max(b) + 0.05) / (a.min(b) + 0.05) >= 4.5,
+                "{palette:?}: {foreground:?}/{background:?}"
+            );
         }
     }
 }

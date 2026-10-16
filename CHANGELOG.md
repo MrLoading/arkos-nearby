@@ -2,19 +2,15 @@
 
 ## [Unreleased]
 
-- Use pixel lettering for menu titles, game names and status messages.
+## [0.5.0] - 2026-10-16
 
-- Smooth menu selection animations and stop redrawing unchanged screens.
-
-- Improve GPU menu responsiveness during selection and connection updates.
-
-- Correct text sampling and transparent text edges in the GPU interface.
-
-- Add an optional GPU menu build with a display preview on the handheld.
-
-- Keep page transitions visible when opening games and network rooms from Options.
-- Animate page entry and return while keeping the current room state.
-- Keep the selection border aligned during room refreshes and connection updates.
+- Add Forest, Sunset and Night themes with saved Y-button selection.
+- Add a campsite emblem, mountain scenery, side ornaments and raised buttons.
+- Use crisp pixel lettering throughout the interface.
+- Animate page entry, focused buttons, character movement and room readiness.
+- Improve menu rendering and controller response with GPU acceleration.
+- Keep preparing-room buttons readable and jumping characters inside their panels.
+- Align device names and addresses in network-only rooms.
 
 ## [0.4.0] - 2026-10-11
 

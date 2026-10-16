@@ -18,9 +18,9 @@
     "released_binary_sha256": "a874e1df5c862972d3c3220d38a69d043830b10122e23f49462c1d84597b301e"
   },
   "rust": {
-    "source_archive": "arkos-nearby-0.4.0-rust-sources.tar.gz",
-    "locked_crates": 86,
-    "included_crates": 81
+    "source_archive": "arkos-nearby-0.5.0-rust-sources.tar.gz",
+    "locked_crates": 100,
+    "included_crates": 100
   },
   "netplay_compression": {
     "schema": 1,
@@ -60,7 +60,7 @@
       "libc.so.6"
     ],
     "maximum_glibc": "2.17",
-    "compiler": "Apple clang version 21.0.0 (clang-2100.4.00.102)",
+    "compiler": "Apple clang version 21.0.0 (clang-2100.3.20.102)",
     "linker": "LLD 21.1.3 (https://github.com/rust-lang/llvm-project.git 4f74b76fb69688474e073fb26b316d9ea571388f) (compatible with GNU linkers)",
     "flags": [
       "--target=aarch64-linux-gnu",
@@ -125,7 +125,7 @@
       "target": "aarch64-linux-gnu",
       "git_version": "7dfdc25-footer1",
       "optimization": "-O2",
-      "compiler": "Apple clang 21.0.0 (clang-2100.4.00.102)",
+      "compiler": "Apple clang 21.0.0 (clang-2100.3.20.102)",
       "linker": "rust-lld from Rust 1.92",
       "strip": "llvm-strip from LLVM 18",
       "recipe": "scripts/build_owned_cores.py"
@@ -192,5 +192,12 @@
     "mirui_crate_sha256": "1f90999cbfdb4d4b9a9cb9457c8124302c9175909de3828312d11ab93b20d217",
     "mirui_patch_sha256": "a18f2199c352257b9c0a10b880124b39550d2d49cc4fe3f7b75603cad51c223f",
     "effective_cargo_lock_sha256": "d0d30bea301ab814b0976c384b29f4424ccad1374a48e462e6f9f837a3105662"
+  },
+  "sdl2": {
+    "version": "2.32.10",
+    "archive": "SDL2-2.32.10.tar.gz",
+    "sha256": "5f5993c530f084535c65a6879e9b26ad441169b3e25d789d83287040a9ca5165",
+    "linkage": "static",
+    "license": "zlib"
   }
 }

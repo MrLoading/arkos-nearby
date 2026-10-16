@@ -8,6 +8,7 @@ pub struct Feedback {
     press: Tween,
     activity: [Tween; 3],
     last_ms: u64,
+    press_sequence: u64,
 }
 
 impl Default for Feedback {
@@ -26,37 +27,42 @@ impl Default for Feedback {
                 tween
             }),
             last_ms: 0,
+            press_sequence: 0,
         }
     }
 }
 
 impl Feedback {
     pub fn press(&mut self, now: u64) {
+        self.press_sequence = self.press_sequence.wrapping_add(1);
         self.last_ms = now;
         self.press = Tween::ease_to(Fixed::ONE, Fixed::ZERO, 180);
     }
 
     pub fn apply(&mut self, scene: &Scene, now: u64) {
+        scene.animate(now, self.press_sequence);
         let delta = now.saturating_sub(self.last_ms).min(u64::from(u16::MAX)) as u16;
         self.last_ms = now;
         self.press.tick(delta);
         let press = self.press.value().to_f32();
-        let stamp = Color::rgb(
-            (234.0 - 16.0 * press) as u8,
-            (207.0 - 37.0 * press) as u8,
-            (192.0 - 60.0 * press) as u8,
-        );
+        let theme = &scene.colors;
+        let stamp = theme.resolve(if press > 0.0 {
+            ColorToken::Primary
+        } else {
+            ColorToken::Custom("sky")
+        });
+        let accent = theme.resolve(ColorToken::Primary);
         let activity = std::array::from_fn(|index| {
             self.activity[index].tick(delta);
             if scene.loading {
                 Color::rgba(
-                    166,
-                    61,
-                    50,
+                    accent.r,
+                    accent.g,
+                    accent.b,
                     (48.0 + self.activity[index].value().to_f32() * 207.0) as u8,
                 )
             } else {
-                Color::rgb(242, 235, 221)
+                theme.resolve(ColorToken::Surface)
             }
         });
         scene.feedback(stamp, activity);

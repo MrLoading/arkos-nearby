@@ -335,6 +335,8 @@ impl Terminal {
                     actions.push(Action::Confirm);
                 } else if first == b'r' || first == b'R' {
                     actions.push(Action::Refresh);
+                } else if first == b'y' || first == b'Y' {
+                    actions.push(Action::Theme);
                 }
             }
         }
