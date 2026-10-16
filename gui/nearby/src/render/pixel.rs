@@ -1,12 +1,29 @@
 use super::{
-    motion::{self, Frame},
+    motion::{self, Frame, anchors, timing},
     state::DisplayState,
     style::*,
 };
-use crate::model::Phase;
+use crate::{model::Phase, theme::actor};
 use mirui::prelude::*;
-use mirui::render::command::DrawCommand;
+use mirui::render::{command::DrawCommand, raster::FillRule, scene::Paint};
+use mirui::types::Transform;
 use mirui::ui::theme::{Theme, ThemedColor};
+use mirui::ui::view::PaintCtx;
+
+// Local pixel outlines, positioned from each artwork's ground anchor.
+static TREE_CANOPY: Path = path!(
+    M 4 0 H 6 V 2 H 7 V 4 H 8 V 6 H 9 V 8 H 10 V 10
+    H 0 V 8 H 1 V 6 H 2 V 4 H 3 V 2 H 4 Z
+);
+static TENT_SHELL: Path = path!(
+    M 7 0 H 9 V 1 H 10 V 2 H 11 V 3 H 12 V 4
+    H 13 V 5 H 14 V 6 H 15 V 7 H 16 V 8 H 0
+    V 7 H 1 V 6 H 2 V 5 H 3 V 4 H 4
+    V 3 H 5 V 2 H 6 V 1 H 7 Z
+);
+static TENT_LIGHT: Path = path!(
+    M 5 0 H 6 V 6 H 0 V 5 H 1 V 4 H 2 V 3 H 3 V 2 H 4 V 1 H 5 Z
+);
 
 #[derive(Clone, Copy, Debug)]
 pub(super) enum Kind {
@@ -25,9 +42,33 @@ pub(super) enum Kind {
 }
 
 #[component]
-pub(super) struct Sprite {
+pub(super) struct ChoiceSprite {
     pub state: model!(DisplayState),
-    pub kind: Kind,
+    pub index: usize,
+    pub mode: bool,
+}
+
+#[component]
+pub(super) struct WalkerSprite {
+    pub state: model!(DisplayState),
+}
+
+#[component]
+pub(super) struct SessionSprite {
+    pub state: model!(DisplayState),
+}
+
+#[component]
+pub(super) struct SignalSprite {
+    pub state: model!(DisplayState),
+    pub index: usize,
+    pub strength: u8,
+    pub available: bool,
+}
+
+#[component]
+pub(super) struct SearchSprite {
+    pub state: model!(DisplayState),
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -49,37 +90,78 @@ struct Painter<'a, F> {
     unit: i32,
 }
 
-impl<F: FnMut(Rect, Color)> Painter<'_, F> {
+// Local artwork pixels include the full actor, jump, shadow and particle envelope.
+const ACTOR_SIDE_CLEARANCE: i32 = 48;
+
+fn stage_position(width: i32, position: Fixed) -> i32 {
+    ACTOR_SIDE_CLEARANCE + (Fixed::from_int(width - ACTOR_SIDE_CLEARANCE * 2) * position).to_int()
+}
+
+impl<F: FnMut(DrawCommand<'_>)> Painter<'_, F> {
+    fn contour(
+        &mut self,
+        path: &Path,
+        x: i32,
+        y: i32,
+        scale: i32,
+        color: impl Into<ThemedColor>,
+    ) -> bool {
+        let color = color.into().resolve(self.theme);
+        // Preserve Fill's whole-pixel coverage and translucent blending on reduced grids.
+        if scale % self.unit != 0 || color.a != 255 {
+            return false;
+        }
+        let scale = Fixed::from_int(scale / self.unit);
+        (self.emit)(DrawCommand::FillPath {
+            path,
+            transform: Transform::translate(
+                Fixed::from_int(x / self.unit),
+                Fixed::from_int(y / self.unit),
+            )
+            .compose(&Transform::scale(scale, scale)),
+            paint: &Paint::Color(color.into()),
+            opa: 255,
+            fill_rule: FillRule::NonZero,
+        });
+        true
+    }
+
     fn tree(&mut self, x: i32, y: i32, scale: i32, color: impl Into<ThemedColor> + Copy) {
         self.fill(x - scale, y - 3 * scale, 2 * scale, 3 * scale, DEEP);
-        for row in 0..5 {
-            self.fill(
-                x - (row + 1) * scale,
-                y - (12 - row * 2) * scale,
-                (row * 2 + 2) * scale,
-                2 * scale,
-                color,
-            );
+        if !self.contour(&TREE_CANOPY, x - 5 * scale, y - 12 * scale, scale, color) {
+            for row in 0..5 {
+                self.fill(
+                    x - (row + 1) * scale,
+                    y - (12 - row * 2) * scale,
+                    (row * 2 + 2) * scale,
+                    2 * scale,
+                    color,
+                );
+            }
         }
     }
     fn tent(&mut self, x: i32, y: i32, scale: i32) {
-        for row in 0..8 {
-            self.fill(
-                x - (row + 1) * scale,
-                y - (8 - row) * scale,
-                (row * 2 + 2) * scale,
-                scale,
-                CLAY,
-            );
+        if !self.contour(&TENT_SHELL, x - 8 * scale, y - 8 * scale, scale, CLAY) {
+            for row in 0..8 {
+                self.fill(
+                    x - (row + 1) * scale,
+                    y - (8 - row) * scale,
+                    (row * 2 + 2) * scale,
+                    scale,
+                    CLAY,
+                );
+            }
         }
-        for row in 0..6 {
-            self.fill(
-                x - (row + 1) * scale,
-                y - (6 - row) * scale,
-                (row + 1) * scale,
-                scale,
-                WARNING,
-            );
+        if !self.contour(&TENT_LIGHT, x - 6 * scale, y - 6 * scale, scale, WARNING) {
+            for row in 0..6 {
+                self.fill(
+                    x - (row + 1) * scale,
+                    y - (6 - row) * scale,
+                    (row + 1) * scale,
+                    scale,
+                    WARNING,
+                );
+            }
         }
         self.fill(x, y - 4 * scale, 3 * scale, 4 * scale, DEEP);
         self.fill(x - 9 * scale, y, 18 * scale, scale, DEEP);
@@ -142,11 +224,18 @@ impl<F: FnMut(Rect, Color)> Painter<'_, F> {
                     }
                 }
             }
-            Scenery::Landscape | Scenery::Ridge => {
+            Scenery::Ridge => {
+                let floor = h - 6;
+                self.mountain(w * 3 / 5, floor, w / 3, (floor - 4).min(42), PANEL);
+                self.mountain(w * 4 / 5, floor, w / 3, (floor - 4).min(30), HILL);
+                self.tent(w * 2 / 3, floor, 1);
+                self.tree(w - 16, floor, 1, ACCENT);
+                self.tree(w - 32, floor, 1, HILL);
+                self.fill(w / 2, floor, w - w / 2, 3, DIVIDER);
+            }
+            Scenery::Landscape => {
                 let floor = h - 10;
-                if matches!(kind, Scenery::Landscape) {
-                    self.fill(0, 0, w, floor, SKY);
-                }
+                self.fill(0, 0, w, floor, SKY);
                 self.mountain(w / 3, floor, w * 2 / 3, (floor - 4).min(60), PANEL);
                 self.mountain(w * 3 / 4, floor, w / 2, (floor - 4).min(44), HILL);
                 self.tree(20, floor, 2, ACCENT);
@@ -172,33 +261,34 @@ impl<F: FnMut(Rect, Color)> Painter<'_, F> {
             self.width,
             self.height
         );
-        (self.emit)(
-            Rect::new(
+        (self.emit)(DrawCommand::Fill {
+            area: Rect::new(
                 x / self.unit,
                 y / self.unit,
                 (w / self.unit).max(1),
                 (h / self.unit).max(1),
             ),
-            color.into().resolve(self.theme),
-        );
+            color: color.into().resolve(self.theme),
+            transform: Transform::IDENTITY,
+            quad: None,
+            radius: Fixed::ZERO,
+            opa: 255,
+        });
     }
     fn alpha(&self, token: ColorToken, alpha: u8) -> Color {
         let color = self.theme.resolve(token);
         Color::rgba(color.r, color.g, color.b, alpha)
     }
     fn person(&mut self, x: i32, y: i32, guest: bool, step: u16, facing_left: bool) {
-        let color = if guest {
-            Color::rgb(100, 119, 207)
-        } else {
-            Color::rgb(219, 96, 61)
-        };
+        // Rectangles below are local pixel-art data; stage placement is layout-derived.
+        let color = if guest { actor::GUEST } else { actor::HOST };
         let light = if guest {
-            Color::rgb(181, 199, 255)
+            actor::GUEST_LIGHT
         } else {
-            Color::rgb(255, 173, 104)
+            actor::HOST_LIGHT
         };
-        let boots = Color::rgb(48, 43, 56);
-        let f = step / 90 % 4;
+        let boots = actor::BOOTS;
+        let f = step / timing::WALK_FRAME_MS % 4;
         self.fill(x - 13, y + 34, 28, 3, DIVIDER);
         for (dx, dy, w, h) in [
             (-8, 0, 16, 6),
@@ -211,7 +301,7 @@ impl<F: FnMut(Rect, Color)> Painter<'_, F> {
         }
         self.fill(x - 7, y, 14, 2, light);
         self.fill(x - 8, y + 19, 3, 10, light);
-        self.fill(x - 8, y + 10, 16, 9, Color::rgb(255, 224, 170));
+        self.fill(x - 8, y + 10, 16, 9, actor::SKIN);
         self.fill(x + if facing_left { -6 } else { 3 }, y + 12, 3, 3, boots);
         self.fill(x - 8 + if f == 1 { 3 } else { 0 }, y + 29, 6, 5, boots);
         self.fill(x + 2 - if f == 3 { 3 } else { 0 }, y + 29, 6, 5, boots);
@@ -221,19 +311,19 @@ impl<F: FnMut(Rect, Color)> Painter<'_, F> {
                 y + 4,
                 4,
                 8,
-                Color::rgb(244, 200, 95),
+                actor::PACK,
             );
             self.fill(
                 x + if facing_left { 12 } else { -16 },
                 y + 6,
                 4,
                 4,
-                Color::rgb(244, 200, 95),
+                actor::PACK,
             );
         }
     }
     fn flag(&mut self, x: i32, y: i32, age: u16) {
-        let h = (56.0 * (f32::from(age) / 240.0).min(1.0)).round() as i32;
+        let h = (56.0 * timing::progress(age, timing::FLAG_RISE_MS)).round() as i32;
         self.fill(x, y - h, 3, h, FOREGROUND);
         if h > 22 {
             self.fill(x + 3, y - h, 29, 17, ACCENT);
@@ -247,8 +337,11 @@ impl<F: FnMut(Rect, Color)> Painter<'_, F> {
         self.fill(x - 2, y - 30, 4, 4, WARNING);
         if let Some(wave) = wave {
             let reach = (y - 28).min(x - 2).min(self.width - x - 2).clamp(0, 48);
-            for index in 0..3 {
-                let p = f32::from((wave + index * 400) % 1200) / 1200.0;
+            for index in 0..timing::WAVE_COUNT {
+                let p = timing::progress(
+                    (wave + index * (timing::WAVE_MS / timing::WAVE_COUNT)) % timing::WAVE_MS,
+                    timing::WAVE_MS,
+                );
                 let r = 12 + (p * (reach - 12).max(0) as f32).round() as i32;
                 if reach < 12 {
                     continue;
@@ -266,10 +359,10 @@ impl<F: FnMut(Rect, Color)> Painter<'_, F> {
         }
     }
     fn dust(&mut self, x: i32, y: i32, age: u16) {
-        if !(300..560).contains(&age) {
+        if !(timing::HOP_MS..timing::HOP_MS + timing::DUST_MS).contains(&age) {
             return;
         }
-        let p = f32::from(age - 300) / 260.0;
+        let p = timing::progress(age - timing::HOP_MS, timing::DUST_MS);
         for i in 0..6 {
             let side = if i % 2 == 0 { -1.0 } else { 1.0 };
             let dx = (side * (8.0 + (i + 1) as f32 * 6.0 * p)).round() as i32;
@@ -287,10 +380,10 @@ impl<F: FnMut(Rect, Color)> Painter<'_, F> {
         }
     }
     fn stars(&mut self, x: i32, y: i32, age: u16) {
-        if age >= 420 {
+        if age >= timing::STARS_MS {
             return;
         }
-        let p = f32::from(age) / 420.0;
+        let p = timing::progress(age, timing::STARS_MS);
         for i in 0..8 {
             let a = i as f32 * std::f32::consts::FRAC_PI_4;
             let reach = (x - 4)
@@ -310,7 +403,7 @@ impl<F: FnMut(Rect, Color)> Painter<'_, F> {
     }
     fn session(&mut self, w: i32, h: i32, frame: Frame) {
         let floor = h - 12;
-        let position = |value: u16| 48 + (w - 96) * i32::from(value) / 1000;
+        let position = |value: Fixed| stage_position(w, value);
         let host = position(frame.host);
         let guest = position(frame.guest);
         let ready = if frame.network_only {
@@ -319,7 +412,7 @@ impl<F: FnMut(Rect, Color)> Painter<'_, F> {
             frame.ready
         };
         let celebrate = ready
-            && frame.phase_age < 800
+            && frame.phase_age < timing::SETTLED_MS
             && matches!(
                 frame.phase,
                 Phase::HostReady | Phase::WaitingStart | Phase::NetworkConnected
@@ -335,7 +428,7 @@ impl<F: FnMut(Rect, Color)> Painter<'_, F> {
                 if frame.phase == Phase::Creating {
                     frame.phase_age
                 } else {
-                    800
+                    timing::SETTLED_MS
                 },
             );
         }
@@ -351,7 +444,10 @@ impl<F: FnMut(Rect, Color)> Painter<'_, F> {
             host,
             floor - 34
                 + if celebrate {
-                    motion::hop(frame.phase_age.saturating_sub(70), 7.0)
+                    motion::hop(
+                        frame.phase_age.saturating_sub(timing::HOST_HOP_DELAY_MS),
+                        7.0,
+                    )
                 } else {
                     0
                 },
@@ -381,9 +477,15 @@ impl<F: FnMut(Rect, Color)> Painter<'_, F> {
                 frame.phase != Phase::Starting,
             );
         }
-        self.fill(position(200) - 20, floor + 7, 40, 4, ACCENT_DIM);
         self.fill(
-            position(800) - 20,
+            position(anchors::HOST_HOME) - 20,
+            floor + 7,
+            40,
+            4,
+            ACCENT_DIM,
+        );
+        self.fill(
+            position(anchors::GUEST_HOME) - 20,
             floor + 7,
             40,
             4,
@@ -395,7 +497,7 @@ impl<F: FnMut(Rect, Color)> Painter<'_, F> {
                 Phase::ApprovalPending | Phase::ApprovalPendingClient
             )
         {
-            let gate = position(900) - 16;
+            let gate = position(anchors::GATE) - 16;
             self.fill(gate, floor - 42, 4, 40, ACCENT);
             self.fill(gate - 10, floor - 42, 24, 4, ACCENT);
         }
@@ -420,33 +522,108 @@ impl<F: FnMut(Rect, Color)> Painter<'_, F> {
     }
 }
 
-#[view(component = Sprite, priority = 60)]
-pub(super) fn sprite(
+#[view(component = ChoiceSprite, priority = 60)]
+pub(super) fn choice_sprite(
     component: component!(),
-    state: model!(component.state, watch(motion)),
+    state: model!(component.state, watch(choice_motion)),
     paint: paint!(),
     theme: res!(Theme),
 ) {
-    let frame = state.motion;
     let rect = paint.rect();
-    let (w, h) = (rect.w.to_int(), rect.h.to_int());
-    draw(component.kind, w, h, frame, &theme, |area, color| {
-        paint.draw_clipped(
-            &DrawCommand::Fill {
-                area: Rect {
-                    x: rect.x + area.x,
-                    y: rect.y + area.y,
-                    ..area
-                },
-                transform: paint.transform(),
-                quad: None,
-                color,
-                radius: Fixed::ZERO,
-                opa: 255,
-            },
-            paint.transform().apply_rect_bbox(rect),
-        );
-    });
+    draw(
+        Kind::Choice {
+            index: component.index,
+            mode: component.mode,
+        },
+        rect.w.to_int(),
+        rect.h.to_int(),
+        state.choice_motion(),
+        &theme,
+        |command| {
+            draw_in_view(paint, command);
+        },
+    );
+}
+
+#[view(component = WalkerSprite, priority = 60)]
+pub(super) fn walker_sprite(
+    state: model!(component.state, watch(walker_motion)),
+    paint: paint!(),
+    theme: res!(Theme),
+) {
+    let rect = paint.rect();
+    draw(
+        Kind::Walker,
+        rect.w.to_int(),
+        rect.h.to_int(),
+        state.walker_motion(),
+        &theme,
+        |command| {
+            draw_in_view(paint, command);
+        },
+    );
+}
+
+#[view(component = SessionSprite, priority = 60)]
+pub(super) fn session_sprite(
+    state: model!(component.state, watch(session_motion)),
+    paint: paint!(),
+    theme: res!(Theme),
+) {
+    let rect = paint.rect();
+    draw(
+        Kind::Session,
+        rect.w.to_int(),
+        rect.h.to_int(),
+        state.session_motion(),
+        &theme,
+        |command| {
+            draw_in_view(paint, command);
+        },
+    );
+}
+
+#[view(component = SignalSprite, priority = 60)]
+pub(super) fn signal_sprite(
+    component: component!(),
+    state: model!(component.state, watch(signal_motion)),
+    paint: paint!(),
+    theme: res!(Theme),
+) {
+    let rect = paint.rect();
+    draw(
+        Kind::Signal {
+            index: component.index,
+            strength: component.strength,
+            available: component.available,
+        },
+        rect.w.to_int(),
+        rect.h.to_int(),
+        state.signal_motion(),
+        &theme,
+        |command| {
+            draw_in_view(paint, command);
+        },
+    );
+}
+
+#[view(component = SearchSprite, priority = 60)]
+pub(super) fn search_sprite(
+    state: model!(component.state, watch(search_motion)),
+    paint: paint!(),
+    theme: res!(Theme),
+) {
+    let rect = paint.rect();
+    draw(
+        Kind::Search,
+        rect.w.to_int(),
+        rect.h.to_int(),
+        state.search_motion(),
+        &theme,
+        |command| {
+            draw_in_view(paint, command);
+        },
+    );
 }
 
 #[view(component = Scenery, priority = 50)]
@@ -457,24 +634,22 @@ pub(super) fn scenery(component: component!(), paint: paint!(), theme: res!(Them
         rect.w.to_int(),
         rect.h.to_int(),
         &theme,
-        |area, color| {
-            paint.draw_clipped(
-                &DrawCommand::Fill {
-                    area: Rect {
-                        x: rect.x + area.x,
-                        y: rect.y + area.y,
-                        ..area
-                    },
-                    transform: paint.transform(),
-                    quad: None,
-                    color,
-                    radius: Fixed::ZERO,
-                    opa: 255,
-                },
-                paint.transform().apply_rect_bbox(rect),
-            );
-        },
+        |command| draw_in_view(paint, command),
     );
+}
+
+fn draw_in_view(paint: &mut PaintCtx<'_>, mut command: DrawCommand<'_>) {
+    let rect = paint.rect();
+    let parent = paint
+        .transform()
+        .compose(&Transform::translate(rect.x, rect.y));
+    match &mut command {
+        DrawCommand::Fill { transform, .. } | DrawCommand::FillPath { transform, .. } => {
+            *transform = parent.compose(transform);
+        }
+        _ => unreachable!("Pixel artwork emits fills and contours"),
+    }
+    paint.draw_clipped(&command, paint.transform().apply_rect_bbox(rect));
 }
 
 fn draw_scenery(
@@ -482,7 +657,7 @@ fn draw_scenery(
     width: i32,
     height: i32,
     theme: &Theme,
-    emit: impl FnMut(Rect, Color),
+    emit: impl FnMut(DrawCommand<'_>),
 ) {
     if width <= 0 || height <= 0 {
         return;
@@ -511,7 +686,7 @@ fn draw(
     height: i32,
     frame: Frame,
     theme: &Theme,
-    emit: impl FnMut(Rect, Color),
+    emit: impl FnMut(DrawCommand<'_>),
 ) {
     if width <= 0 || height <= 0 {
         return;
@@ -540,7 +715,7 @@ fn draw(
             let age = if frame.selected == Some(index) {
                 frame.selection
             } else {
-                800
+                timing::SETTLED_MS
             };
             let jump = motion::hop(age, 10.0);
             let y = h - 10;
@@ -553,19 +728,26 @@ fn draw(
                 p.fill(w / 2 + 12, y - 11 + jump, 5, 5, ACCENT);
             } else if index == 0 && !mode {
                 p.tent(w / 2 - 12, y + jump, 2);
-                p.flag(w / 2 + 20, y + jump, 800)
+                p.flag(w / 2 + 20, y + jump, timing::SETTLED_MS)
             } else {
-                p.beacon(w / 2, y - 12 + jump, (age < 600).then_some(age));
+                p.beacon(
+                    w / 2,
+                    y - 12 + jump,
+                    (age < timing::CHOICE_WAVE_MS).then_some(age),
+                );
             }
             p.dust(w / 2, y, age);
         }
         Kind::Walker => {
-            let x = 48 + (w - 96) * i32::from(frame.walker) / 1000;
+            let x = stage_position(w, frame.walker);
             p.person(
                 x,
                 h - 38
-                    + if frame.selection >= 240 {
-                        motion::hop(frame.selection - 240, (h - 38).min(4) as f32)
+                    + if frame.selection >= timing::TRAVEL.duration_ms {
+                        motion::hop(
+                            frame.selection - timing::TRAVEL.duration_ms,
+                            (h - 38).min(4) as f32,
+                        )
                     } else {
                         0
                     },
@@ -573,7 +755,11 @@ fn draw(
                 if frame.walking { frame.selection } else { 0 },
                 frame.selected == Some(0),
             );
-            p.dust(x, h - 4, frame.selection.saturating_sub(240));
+            p.dust(
+                x,
+                h - 4,
+                frame.selection.saturating_sub(timing::TRAVEL.duration_ms),
+            );
         }
         Kind::Session => {
             p.session(w, h, frame);
@@ -586,11 +772,13 @@ fn draw(
         } => {
             for i in 0..4 {
                 let age = if let Some(wave) = frame.wave {
-                    wave.saturating_sub(i * 55)
+                    wave.saturating_sub(i * timing::SIGNAL_STAGGER_MS)
                 } else if frame.selected == Some(index) {
-                    frame.selection.saturating_sub(i * 55)
+                    frame
+                        .selection
+                        .saturating_sub(i * timing::SIGNAL_STAGGER_MS)
                 } else {
-                    800
+                    timing::SETTLED_MS
                 };
                 let hbar = 6 + i32::from(i) * 4;
                 p.fill(
@@ -609,9 +797,16 @@ fn draw(
     }
 }
 
+#[derive(Clone, Copy)]
+pub(super) enum Stage {
+    Walker,
+    Search,
+    Session,
+}
+
 #[compose]
-pub(super) fn art(state: model!(DisplayState), kind: Kind, height: i32) -> Entity {
-    let scenery = if matches!(kind, Kind::Session | Kind::Search) {
+pub(super) fn art(state: model!(DisplayState), kind: Stage, height: i32) -> Entity {
+    let scenery = if matches!(kind, Stage::Session | Stage::Search) {
         Scenery::Landscape
     } else {
         Scenery::Map
@@ -625,11 +820,31 @@ pub(super) fn art(state: model!(DisplayState), kind: Kind, height: i32) -> Entit
             clip_children: true
         ) [
             scenery,
-            Sprite {
-                state: state.clone(),
-                kind,
-            },
-        ]
+        ] {
+            match kind {
+                Stage :: Walker => {
+                    View (grow: 1.0, width: Dimension::percent(100)) [
+                        WalkerSprite {
+                            state: state.clone(),
+                        },
+                    ]
+                }
+                Stage :: Search => {
+                    View (grow: 1.0, width: Dimension::percent(100)) [
+                        SearchSprite {
+                            state: state.clone(),
+                        },
+                    ]
+                }
+                Stage :: Session => {
+                    View (grow: 1.0, width: Dimension::percent(100)) [
+                        SessionSprite {
+                            state: state.clone(),
+                        },
+                    ]
+                }
+            }
+        }
     }
 }
 
@@ -638,10 +853,115 @@ mod tests {
     use super::*;
 
     #[test]
+    fn motion_projections_preserve_every_artwork_command() {
+        let theme = crate::theme::Palette::Forest.theme();
+        let commands = |kind, frame| {
+            let mut commands = Vec::new();
+            draw(kind, 320, 160, frame, &theme, |command| {
+                commands.push(match command {
+                    DrawCommand::Fill {
+                        area,
+                        color,
+                        transform,
+                        ..
+                    } => format!("{area:?} {color:?} {transform:?}"),
+                    DrawCommand::FillPath {
+                        path,
+                        transform,
+                        paint: Paint::Color(color),
+                        ..
+                    } => format!("{:?} {transform:?} {:?}", path.commands(), color),
+                    _ => unreachable!("Artwork emits colored fills"),
+                });
+            });
+            commands
+        };
+        for phase in [
+            Phase::Creating,
+            Phase::Checking,
+            Phase::HostReady,
+            Phase::Starting,
+            Phase::Leaving,
+            Phase::Failed,
+        ] {
+            for age in (0..=800).step_by(32) {
+                let frame = Frame {
+                    phase,
+                    phase_age: age,
+                    selection: age,
+                    selected: Some(1),
+                    wave: Some(age),
+                    ready: true,
+                    connected: true,
+                    visitor: true,
+                    network_only: age % 64 == 0,
+                    walking: true,
+                    host_walking: true,
+                    guest_walking: true,
+                    walker: Fixed::HALF,
+                    ..Frame::default()
+                };
+                for (kind, projected) in [
+                    (
+                        Kind::Choice {
+                            index: 0,
+                            mode: false,
+                        },
+                        frame.choice(),
+                    ),
+                    (
+                        Kind::Choice {
+                            index: 1,
+                            mode: true,
+                        },
+                        frame.choice(),
+                    ),
+                    (Kind::Walker, frame.walker()),
+                    (Kind::Session, frame.session()),
+                    (Kind::Search, frame.search()),
+                    (
+                        Kind::Signal {
+                            index: 1,
+                            strength: 75,
+                            available: true,
+                        },
+                        frame.signal(),
+                    ),
+                ] {
+                    assert_eq!(
+                        commands(kind, frame),
+                        commands(kind, projected),
+                        "{kind:?} {phase:?} {age}"
+                    );
+                }
+            }
+        }
+    }
+
+    fn bounds(command: &DrawCommand<'_>) -> Rect {
+        match command {
+            DrawCommand::Fill {
+                area, transform, ..
+            } => transform.apply_rect_bbox(*area),
+            DrawCommand::FillPath {
+                path, transform, ..
+            } => mirui::render::path::bbox_of_cmds_transformed(path.commands(), Some(transform))
+                .expect("Artwork contours have bounds"),
+            _ => unreachable!("Pixel artwork emits fills and contours"),
+        }
+    }
+
+    #[test]
     fn scenery_stays_in_bounds_and_character_colors_are_theme_independent() {
         let mut reference = None;
         for palette in crate::theme::Palette::ALL {
             let theme = palette.theme();
+            for (token, rgb) in actor::COLORS {
+                assert_eq!(
+                    theme.resolve(token),
+                    Color::rgb((rgb >> 16) as u8, (rgb >> 8) as u8, rgb as u8)
+                );
+            }
             for kind in [
                 Scenery::Logo,
                 Scenery::Header,
@@ -659,7 +979,8 @@ mod tests {
                     (592, 68),
                     (640, 480),
                 ] {
-                    draw_scenery(kind, width, height, &theme, |rect, _| {
+                    draw_scenery(kind, width, height, &theme, |command| {
+                        let rect = bounds(&command);
                         assert!(
                             rect.x >= Fixed::ZERO
                                 && rect.y >= Fixed::ZERO
@@ -674,7 +995,10 @@ mod tests {
                 let mut sprite = Vec::new();
                 Painter {
                     theme: &theme,
-                    emit: |_, color| sprite.push(color),
+                    emit: |command: DrawCommand<'_>| match command {
+                        DrawCommand::Fill { color, .. } => sprite.push(color),
+                        _ => unreachable!("Characters use rectangle primitives"),
+                    },
                     width: 120,
                     height: 60,
                     unit: 1,
@@ -759,9 +1083,13 @@ mod tests {
                                 wave: Some(age),
                                 ready: true,
                                 visitor: true,
-                                host: 100 + age.min(800) / 2,
-                                guest: 980 - age.min(800),
-                                walker: if selected == 0 { 250 } else { 750 },
+                                host: Fixed::from_ratio(i32::from(100 + age.min(800) / 2), 1000),
+                                guest: Fixed::from_ratio(i32::from(980 - age.min(800)), 1000),
+                                walker: if selected == 0 {
+                                    anchors::CHOICE_LEFT
+                                } else {
+                                    anchors::CHOICE_RIGHT
+                                },
                                 ..Frame::default()
                             };
                             draw(
@@ -770,7 +1098,8 @@ mod tests {
                                 h,
                                 frame,
                                 &crate::theme::Palette::Forest.theme(),
-                                |rect, _| {
+                                |command| {
+                                    let rect = bounds(&command);
                                     assert!(
                                         rect.x >= Fixed::ZERO
                                             && rect.y >= Fixed::ZERO

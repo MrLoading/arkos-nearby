@@ -441,6 +441,28 @@ fn compatibility_accepts_local_unicast_devices_without_a_mac_allowlist() {
 }
 
 #[test]
+fn display_row_keys_follow_identity_across_signal_and_name_changes() {
+    let mut flow = crate::flow::Flow::new(Some(context()));
+    flow.page = crate::flow::Page::Rooms;
+    let mut first = serde_json::json!({"id":"a".repeat(32),"signal":90});
+    let second = serde_json::json!({"id":"b".repeat(32),"signal":10});
+    flow.scan(
+        flow.generation,
+        serde_json::json!({"rooms":[first.clone(),second.clone()]}),
+    );
+    let before = flow.view()["rooms"].as_array().unwrap().clone();
+    assert_ne!(before[0]["key"], before[1]["key"]);
+    assert_eq!(before[0]["key"].as_str().unwrap().len(), 64);
+    first["signal"] = 1.into();
+    first["name"] = "Changed label".into();
+    flow.scan(flow.generation, serde_json::json!({"rooms":[second,first]}));
+    let after = flow.view()["rooms"].as_array().unwrap().clone();
+    assert_eq!(before[0]["key"], after[1]["key"]);
+    assert_eq!(before[1]["key"], after[0]["key"]);
+    assert!(flow.request.is_none());
+}
+
+#[test]
 fn pairing_credential_is_group_bound_and_rejects_ambiguous_input() {
     use crate::pairing::{credential, display, generate, normalize};
     assert_eq!(normalize("abcd-1234-wxyz").unwrap(), "ABCD1234WXYZ");

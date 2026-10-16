@@ -1,6 +1,6 @@
 use super::{
     Section,
-    cache::GpuTextCache,
+    cache::GpuLayerCache,
     choices::choice,
     chrome::{footer, header},
     lists::{games, rooms},
@@ -31,19 +31,14 @@ pub(super) fn page(view: &View, state: model!(DisplayState), metrics: Metrics) -
                 metrics
             )
             View (
-                height: if metrics.compact { 2 } else { 3 },
+                height: metrics.rule_height(),
                 shrink: 0.0,
                 bg_color: WARNING
             )
             Column (
                 grow: 1.0,
                 min_height: 0,
-                padding: Padding {
-                    top: (if metrics.compact { 8 } else { 12 }).into(),
-                    bottom: (if metrics.compact { 4 } else { 8 }).into(),
-                    left: (if metrics.compact { 16 } else { 32 }).into(),
-                    right: (if metrics.compact { 16 } else { 32 }).into(),
-                },
+                padding: metrics.page_padding(),
                 row_gap: metrics.gap
             ) [
                 Scenery::Margins,
@@ -73,7 +68,7 @@ pub(super) fn page(view: &View, state: model!(DisplayState), metrics: Metrics) -
                             paragraph: paragraph(Start, 1)
                         ) [
                             FONT_PAINT,
-                            GpuTextCache,
+                            GpuLayerCache,
                         ]
                         Row (
                             width: 36,
@@ -93,7 +88,7 @@ pub(super) fn page(view: &View, state: model!(DisplayState), metrics: Metrics) -
                     Text (
                         text: ${ state.status() },
                         height: Dimension::Content,
-                        min_height: i32::from(metrics.small) + 6,
+                        min_height: i32::from(metrics.small) + LABEL_LEADING,
                         shrink: 0.0,
                         width: Dimension::percent(100),
                         min_width: 0,
@@ -105,7 +100,7 @@ pub(super) fn page(view: &View, state: model!(DisplayState), metrics: Metrics) -
                     ) [
                         FONT_PAINT,
                         Section::Status,
-                        GpuTextCache,
+                        GpuLayerCache,
                     ]
                     if view.network_only && matches!(view.page, Page::Host | Page::Joined) {
                         network_panel (view, state, metrics)

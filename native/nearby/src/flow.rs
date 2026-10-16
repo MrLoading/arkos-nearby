@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 
 use crate::context::Context;
 use crate::protocol::hex;
@@ -653,7 +654,7 @@ impl Flow {
     pub fn view(&self) -> Value {
         let ids = self.order();
         let rows: Vec<_> = if self.page == Page::Rooms {
-            ids.iter().map(|id| { let record = &self.rooms[id]; json!({"name":room_name(&record.room),"detail":if self.network_only { "仅组网房间" } else if truth(&record.room,"same_game_hint") { "同一游戏，可以加入" } else { "其他游戏的房间" },"signal":record.room["signal"].as_i64().unwrap_or(0).clamp(0,100),"available":record.available}) }).collect()
+            ids.iter().map(|id| { let record = &self.rooms[id]; json!({"key":format!("{:x}", Sha256::digest(id.as_bytes())),"name":room_name(&record.room),"detail":if self.network_only { "仅组网房间" } else if truth(&record.room,"same_game_hint") { "同一游戏，可以加入" } else { "其他游戏的房间" },"signal":record.room["signal"].as_i64().unwrap_or(0).clamp(0,100),"available":record.available}) }).collect()
         } else {
             vec![]
         };

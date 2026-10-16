@@ -43,6 +43,8 @@ pub enum Phase {
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RoomRow {
+    #[serde(default)]
+    pub key: String,
     pub name: String,
     pub detail: String,
     pub signal: u8,
@@ -89,6 +91,8 @@ pub struct NetworkPeer {
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct GameRow {
+    #[serde(default)]
+    pub key: String,
     pub name: String,
     pub detail: String,
     pub directory: bool,

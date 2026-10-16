@@ -103,7 +103,20 @@ pub(super) fn next_step(view: &View) -> &str {
             Phase::ApprovalPendingClient => "请房主按 A 确认加入",
             Phase::Connecting => "正在连接房间并获取地址",
             Phase::Leaving => "正在断开连接并恢复 Wi-Fi",
-            _ => "选择房间，与附近掌机组网",
+            Phase::Creating => "房间准备好后，好友才能加入",
+            Phase::WaitingPeer => "请好友选择这个房间加入",
+            Phase::ApprovalPending => "按 A 确认，B 关闭房间",
+            Phase::Closed | Phase::Failed => "按 B 返回，重新创建或选择房间",
+            Phase::RestoreFailed => "按 A 重试，完成后再返回",
+            Phase::RoomActive => "按 A 关闭上一场后继续",
+            Phase::PeerPreparing
+            | Phase::HostReady
+            | Phase::Checking
+            | Phase::Notifying
+            | Phase::WaitingStart
+            | Phase::Starting => "正在确认双方的局域网连接",
+            Phase::Idle if view.page == Page::Rooms => "选择房间，与附近掌机组网",
+            Phase::Idle => "方向键选择，按 A 确认",
         };
     }
     match phase(view) {
@@ -167,6 +180,8 @@ pub(super) fn status_text(view: &View) -> &str {
     }
     match view.page {
         Page::Mode => "请选择仅组网或选择游戏",
+        Page::Choice if view.network_only => "创建房间，或加入附近掌机的房间",
+        Page::Host if view.network_only => next_step(view),
         Page::Choice => "两台掌机选择同一款游戏，再创建或加入房间",
         Page::Host => "请好友选择同一款游戏，加入这个房间",
         Page::Rooms => "选择房间后确认加入，列表会自动刷新",
@@ -221,7 +236,15 @@ pub(super) fn confirm_text(view: &View) -> &str {
         Phase::ApprovalPending if !view.busy => "确认",
         Phase::Idle => match view.page {
             Page::Choice | Page::Mode => "确认",
-            Page::Rooms => "加入",
+            Page::Rooms
+                if !view.busy
+                    && view
+                        .rooms
+                        .get(view.selected)
+                        .is_some_and(|room| room.available) =>
+            {
+                "加入"
+            }
             Page::Games if !view.busy && !view.entries.is_empty() => "选择",
             _ => "",
         },

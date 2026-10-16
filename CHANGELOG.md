@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-10-16
+
+- Add side markers and bottom shadows to room and game rows, with sparse lists aligned at the top.
+- Keep selection stable while room lists refresh and refine button and character feedback.
+- Improve connection panels and show join hints for available rooms.
+- Correct network-only room guidance and keep hint text clear of panel shadows.
+
 ## [0.5.0] - 2026-10-16
 
 - Add Forest, Sunset and Night themes with saved Y-button selection.

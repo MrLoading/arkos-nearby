@@ -18,6 +18,90 @@ use std::rc::Rc;
 type TestApp = App<FramebufSurface<fn(&[u8], PhysicalRect)>>;
 
 #[test]
+fn sprite_observers_ignore_unrelated_motion_and_track_selection_and_scan() {
+    use mirui::core::reactive::{Effect, flush_signal_dirty};
+    let mut app = app([640, 480]);
+    let mut current = view(Page::Rooms);
+    let scene = draw(&mut app, &current).unwrap();
+    scene.state.animate(0, 0);
+    scene.state.animate(1000, 0);
+    flush_signal_dirty(&mut app.world);
+    let selectors: [fn(&DisplayHandle) -> motion::Frame; 5] = [
+        DisplayHandle::choice_motion,
+        DisplayHandle::walker_motion,
+        DisplayHandle::session_motion,
+        DisplayHandle::signal_motion,
+        DisplayHandle::search_motion,
+    ];
+    let counts = Rc::new(Cell::new([0; 5]));
+    let _effects: Vec<_> = selectors
+        .into_iter()
+        .enumerate()
+        .map(|(index, read)| {
+            let state = scene.state.clone();
+            let counts = counts.clone();
+            Effect::new(move || {
+                let _ = read(&state);
+                let mut next = counts.get();
+                next[index] += 1;
+                counts.set(next);
+            })
+        })
+        .collect();
+    assert_eq!(counts.get(), [1; 5]);
+    scene.state.animate(1000, 1);
+    flush_signal_dirty(&mut app.world);
+    assert_eq!(counts.get(), [1; 5], "Button press does not redraw artwork");
+    current.selected = 1;
+    scene.state.present(&current);
+    scene.state.animate(1000, 1);
+    flush_signal_dirty(&mut app.world);
+    assert_eq!(counts.get(), [2, 2, 1, 2, 1]);
+    current.refreshing = true;
+    scene.state.present(&current);
+    scene.state.animate(1000, 1);
+    flush_signal_dirty(&mut app.world);
+    assert_eq!(counts.get(), [2, 2, 2, 3, 2]);
+}
+
+#[test]
+fn retained_lists_start_below_status_at_every_row_count() {
+    for size in [[480, 320], [640, 480]] {
+        for page in [Page::Rooms, Page::Games] {
+            let mut app = app(size);
+            let mut current = view(page);
+            current.rooms.truncate(1);
+            current.entries.truncate(1);
+            let mut scene = draw(&mut app, &current).unwrap();
+            let mut feedback = Feedback::default();
+            for (step, count) in [1, 4, 2, 0, 1].into_iter().enumerate() {
+                current = view(page);
+                current.rooms.truncate(count);
+                current.entries.truncate(count);
+                update(&mut scene, &current).unwrap();
+                paint_at(&mut app, &mut feedback, &scene, (step as u64 + 1) * 1000);
+                if page == Page::Rooms {
+                    assert_eq!(confirm_text(&current), if count == 0 { "" } else { "加入" });
+                }
+                if count > 0 {
+                    let top = focus_rect(&app).unwrap()[1];
+                    let status = rect(&app, "nearby_status");
+                    let gap = top - (status.y + status.h).to_int();
+                    assert!(
+                        (0..=style::Metrics::for_height(size[1]).gap * 2).contains(&gap),
+                        "{size:?} {page:?} count={count} gap={gap}"
+                    );
+                }
+                assert_full_frame_matches(
+                    &mut app,
+                    "Retained list decoration and empty transition",
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn theme_changes_preserve_scene_state_and_refresh_cached_pixels() {
     for size in [[320, 240], [640, 480]] {
         let mut app = app(size);
@@ -138,6 +222,7 @@ fn view(page: Page) -> View {
         room_name: "房间 A216".into(),
         rooms: (0..4)
             .map(|i| RoomRow {
+                key: format!("row-{i}"),
                 name: format!("房间 {i}"),
                 detail: "同一游戏，可以加入".into(),
                 signal: 70,
@@ -146,6 +231,7 @@ fn view(page: Page) -> View {
             .collect(),
         entries: (0..4)
             .map(|i| GameRow {
+                key: format!("row-{i}"),
                 name: format!("游戏 {i} / Multiplayer"),
                 detail: "NES / FC".into(),
                 directory: false,
@@ -336,7 +422,27 @@ fn responsive_layout_keeps_focus_and_text_sections_inside_the_viewport() {
             assert!(status.y + status.h <= body.y + body.h, "{size:?} {page:?}");
             assert!(footer.y + footer.h <= Fixed::from_int(i32::from(size[1])));
             for (entity, _) in app.world.query::<Text>().iter() {
-                let text = app.world.get::<ComputedRect>(entity).unwrap().0;
+                let style = app.world.get::<mirui::ui::Style>(entity).unwrap();
+                let size = style.font_size.expect("Every label has a native font size");
+                assert!(matches!(size, style::BODY_SIZE | style::TITLE_SIZE));
+                assert_eq!(style.font_stack.iter().next(), Some(&style::font(size)));
+                let mut node = entity;
+                let mut hidden = false;
+                loop {
+                    hidden |= mirui::ui::branch::is_effectively_hidden(&app.world, node);
+                    let Some(parent) = app.world.get::<mirui::ui::Parent>(node) else {
+                        break;
+                    };
+                    node = parent.0;
+                }
+                if hidden {
+                    continue;
+                }
+                let text = app
+                    .world
+                    .get::<ComputedRect>(entity)
+                    .expect("Visible text must have computed layout")
+                    .0;
                 let mut ancestor = entity;
                 while let Some(parent) = app.world.get::<mirui::ui::Parent>(ancestor) {
                     ancestor = parent.0;
@@ -357,6 +463,68 @@ fn responsive_layout_keeps_focus_and_text_sections_inside_the_viewport() {
                     "{size:?} {page:?}: focus {:?} escapes footer {footer:?}",
                     [x, y, w, h]
                 );
+            }
+        }
+    }
+}
+
+#[test]
+fn network_guidance_reserves_space_across_session_transitions() {
+    for size in [[480, 320], [640, 480]] {
+        for page in [Page::Host, Page::Joined] {
+            let mut app = app(size);
+            let mut current = view(page);
+            current.network_only = true;
+            current.phase = Phase::Creating;
+            let mut scene = draw(&mut app, &current).unwrap();
+            let mut feedback = Feedback::default();
+            let mut time = 0;
+            for phase in [
+                Phase::Creating,
+                Phase::WaitingPeer,
+                Phase::ApprovalPending,
+                Phase::Connecting,
+                Phase::ApprovalPendingClient,
+                Phase::NetworkConfirming,
+                Phase::NetworkConnected,
+            ] {
+                current.phase = phase;
+                for duplicate in [false, true, false] {
+                    current.status = if duplicate {
+                        next_step(&current).into()
+                    } else {
+                        "设备提供的当前状态".into()
+                    };
+                    update(&mut scene, &current).unwrap();
+                    time += 100;
+                    paint_at(&mut app, &mut feedback, &scene, time);
+                    if duplicate {
+                        continue;
+                    }
+                    let hint = app
+                        .world
+                        .query::<Text>()
+                        .iter()
+                        .find(|(_, text)| {
+                            text.resolve(app.world.resource()).as_ref() == next_step(&current)
+                        })
+                        .unwrap()
+                        .0;
+                    let hint_rect = app.world.get::<ComputedRect>(hint).unwrap().0;
+                    let mut node = hint;
+                    while let Some(parent) = app.world.get::<mirui::ui::Parent>(node) {
+                        node = parent.0;
+                        if let Some(bounds) = app.world.get::<ComputedRect>(node) {
+                            assert!(
+                                hint_rect.y >= bounds.0.y
+                                    && hint_rect.y + hint_rect.h <= bounds.0.y + bounds.0.h,
+                                "{size:?} {page:?} {phase:?}: hint {hint_rect:?} escapes ancestor {:?}",
+                                bounds.0
+                            );
+                        }
+                    }
+                    assert_full_frame_matches(&mut app, "Guidance visibility transition");
+                }
             }
         }
     }
@@ -397,7 +565,8 @@ fn network_status_keeps_connection_actions_inside_the_viewport() {
                 app.world.get::<ComputedRect>(entity).unwrap().0
             };
             let local = text_rect(&view.local_address);
-            let hint = text_rect(next_step(&view));
+            let hint =
+                (next_step(&view) != status_text(&view)).then(|| text_rect(next_step(&view)));
             let mut previous_bottom = Fixed::ZERO;
             for (name, address) in std::iter::once(("本机", view.local_address.as_str())).chain(
                 view.peers
@@ -419,7 +588,7 @@ fn network_status_keeps_connection_actions_inside_the_viewport() {
                     "Addresses stay above actions: {size:?} {page:?} {address:?} action_y={y}"
                 );
                 assert!(
-                    address.y + address.h <= hint.y,
+                    hint.is_none_or(|hint| address.y + address.h <= hint.y),
                     "Addresses stay above the connection hint"
                 );
                 previous_bottom = address.y + address.h;
@@ -712,8 +881,96 @@ fn refreshed_room_rows_keep_the_page_and_rebind_selection_to_live_entities() {
         .0;
     let selected = app.world.get::<FollowBounds>(frame).unwrap().target;
     assert!(app.world.is_alive(selected));
-    assert_eq!(app.world.get::<FocusTarget>(selected).unwrap().index, 2);
+    assert_eq!(app.world.get::<FocusTarget>(selected).unwrap().index(), 2);
     assert!(old_targets.iter().all(|node| *node != selected));
+}
+
+#[test]
+fn retained_rows_keep_entities_and_update_contents_indices_and_focus() {
+    for page in [Page::Rooms, Page::Games] {
+        let mut app = app([640, 480]);
+        let mut next = view(page);
+        let mut scene = draw(&mut app, &next).unwrap();
+        let mut feedback = Feedback::default();
+        paint_at(&mut app, &mut feedback, &scene, 1000);
+        let targets: Vec<_> = app
+            .world
+            .query::<FocusTarget>()
+            .iter()
+            .map(|(node, marker)| (marker.index(), node))
+            .collect();
+        let first = targets.iter().find(|(index, _)| *index == 0).unwrap().1;
+        let original_text: Vec<_> = app
+            .world
+            .query::<Text>()
+            .iter()
+            .map(|(node, _)| node)
+            .collect();
+        if page == Page::Rooms {
+            next.rooms[0].name = "更新后的房间".into();
+            next.rooms[0].signal = 12;
+            next.rooms[0].available = false;
+            next.rooms.swap(0, 2);
+        } else {
+            next.entries[0].name = "更新后的游戏".into();
+            next.entries[0].detail = "新的说明".into();
+            next.entries.swap(0, 2);
+        }
+        next.selected = 2;
+        update(&mut scene, &next).unwrap();
+        advance_checked(&mut app, &mut feedback, &scene, 1600);
+        assert!(targets.iter().all(|(_, node)| app.world.is_alive(*node)));
+        assert!(original_text.iter().all(|node| app.world.is_alive(*node)));
+        assert_eq!(app.world.get::<FocusTarget>(first).unwrap().index(), 2);
+        let focus = app
+            .world
+            .query::<selection::SelectionFrame>()
+            .iter()
+            .next()
+            .unwrap()
+            .0;
+        assert_eq!(app.world.get::<FollowBounds>(focus).unwrap().target, first);
+        let labels: Vec<_> = app
+            .world
+            .query::<Text>()
+            .iter()
+            .filter(|(node, _)| {
+                selection::contains(first, *node, |node| {
+                    app.world.get::<mirui::ui::Parent>(node).map(|p| p.0)
+                })
+            })
+            .map(|(_, text)| text.resolve(app.world.resource()).to_string())
+            .collect();
+        assert!(
+            labels.contains(
+                &if page == Page::Rooms {
+                    "更新后的房间"
+                } else {
+                    "更新后的游戏"
+                }
+                .to_string()
+            )
+        );
+        assert!(
+            labels.contains(
+                &if page == Page::Rooms {
+                    "房间已离线，等待重新出现"
+                } else {
+                    "新的说明"
+                }
+                .to_string()
+            )
+        );
+        let mut expected = self::app([640, 480]);
+        let expected_scene = draw(&mut expected, &next).unwrap();
+        let mut expected_feedback = Feedback::default();
+        paint_at(&mut expected, &mut expected_feedback, &expected_scene, 1600);
+        assert_eq!(
+            app.backend.framebuffer().buf.as_slice(),
+            expected.backend.framebuffer().buf.as_slice(),
+            "Retained rows must render the same live values as fresh rows"
+        );
+    }
 }
 
 #[test]

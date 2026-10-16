@@ -12,6 +12,7 @@ pub(super) enum TextField {
     Next,
     HostButton,
     Peer,
+    RoomName,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -30,8 +31,8 @@ pub(super) fn publish<T: Clone + PartialEq>(signal: &Signal<T>, value: T) {
 pub(super) struct DisplayState {
     view: View,
     direction: PageDirection,
-    rooms: Signal<Vec<(usize, crate::model::RoomRow)>>,
-    entries: Signal<Vec<crate::model::GameRow>>,
+    rooms: super::rows::Rows<crate::model::RoomRow>,
+    entries: super::rows::Rows<crate::model::GameRow>,
     devices: Signal<Vec<crate::model::NetworkPeer>>,
     room_name: Signal<String>,
     heading: Signal<String>,
@@ -113,9 +114,9 @@ impl DisplayState {
             .take(4)
             .map(|(i, row)| (i, row.clone()))
             .collect();
-        publish(&self.rooms, rows);
-        let entries: Vec<_> = view.entries.iter().take(4).cloned().collect();
-        publish(&self.entries, entries);
+        self.rooms.present(rows);
+        let entries = view.entries.iter().take(4).cloned().enumerate().collect();
+        self.entries.present(entries);
         let mut devices = vec![crate::model::NetworkPeer {
             name: "本机".into(),
             address: if view.local_address.is_empty() {
@@ -140,10 +141,10 @@ impl DisplayState {
         self.view.clone_from(view);
     }
 
-    pub(super) fn rooms(&self) -> Vec<(usize, crate::model::RoomRow)> {
+    pub(super) fn rooms(&self) -> Vec<super::rows::Row<crate::model::RoomRow>> {
         self.rooms.get()
     }
-    pub(super) fn entries(&self) -> Vec<crate::model::GameRow> {
+    pub(super) fn entries(&self) -> Vec<super::rows::Row<crate::model::GameRow>> {
         self.entries.get()
     }
     pub(super) fn devices(&self) -> Vec<crate::model::NetworkPeer> {
@@ -243,6 +244,31 @@ impl DisplayState {
         self.activity = activity;
     }
 
+    #[observe]
+    pub(super) fn choice_motion(&self) -> super::motion::Frame {
+        self.motion.choice()
+    }
+
+    #[observe]
+    pub(super) fn walker_motion(&self) -> super::motion::Frame {
+        self.motion.walker()
+    }
+
+    #[observe]
+    pub(super) fn session_motion(&self) -> super::motion::Frame {
+        self.motion.session()
+    }
+
+    #[observe]
+    pub(super) fn signal_motion(&self) -> super::motion::Frame {
+        self.motion.signal()
+    }
+
+    #[observe]
+    pub(super) fn search_motion(&self) -> super::motion::Frame {
+        self.motion.search()
+    }
+
     pub(super) fn animate(&mut self, now: u64, press_sequence: u64) {
         let selected = self.selected();
         self.motion = self
@@ -266,6 +292,7 @@ impl DisplayStateHandle {
             Next => self.next(),
             HostButton => self.host_button(),
             Peer => self.peer(),
+            TextField::RoomName => self.room_name(),
         }
     }
 }
@@ -279,8 +306,8 @@ pub(super) fn install<B: Surface, F: RendererFactory<B>>(app: &mut App<B, F>) {
         .add_model(DisplayState {
             view: View::default(),
             direction: PageDirection::Forward,
-            rooms: Signal::new(Vec::new()),
-            entries: Signal::new(Vec::new()),
+            rooms: super::rows::Rows::default(),
+            entries: super::rows::Rows::default(),
             devices: Signal::new(Vec::new()),
             room_name: Signal::new(String::new()),
             heading: Signal::new(String::new()),

@@ -2,6 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 
 use crate::context::{self, Context};
 use crate::{Result, require};
@@ -283,7 +284,7 @@ impl Browser {
             .selected
             .saturating_sub(3)
             .min(level.entries.len().saturating_sub(4));
-        let entries: Vec<_> = level.entries.iter().skip(first).take(4).map(|entry| json!({"name":entry.name,"detail":if entry.directory { "打开列表" } else { "选择游戏" },"directory":entry.directory})).collect();
+        let entries: Vec<_> = level.entries.iter().skip(first).take(4).map(|entry| json!({"key":format!("{:x}", Sha256::digest(entry.path.as_os_str().as_encoded_bytes())),"name":entry.name,"detail":if entry.directory { "打开列表" } else { "选择游戏" },"directory":entry.directory})).collect();
         json!({"page":"games","title":if self.levels.len()==1 { "选择游戏平台" } else { "选择游戏" },"core":level.path.as_ref().map(|entry|entry.name.clone()).unwrap_or_else(||"本机游戏".into()),"selected":level.selected.saturating_sub(first),"entries":entries,"rooms":[],"room_name":"","ready":false,"busy":self.busy,"refreshing":false,"status":if self.status.is_empty() { format!("{} / {}",if level.entries.is_empty(){0}else{level.selected+1},level.entries.len()) } else {self.status.clone()},"phase":"idle","back_label":if self.busy {"取消"} else if self.levels.len()==1 {"退出"} else {"上级"}})
     }
 }

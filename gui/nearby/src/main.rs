@@ -143,6 +143,7 @@ fn benchmark() -> Result<(), String> {
             view.page = model::Page::Rooms;
             view.rooms = (0..4)
                 .map(|_| model::RoomRow {
+                    key: String::new(),
                     name: "房间".into(),
                     detail: "同一游戏，可以加入".into(),
                     signal: 75,

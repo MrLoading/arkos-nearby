@@ -1,4 +1,4 @@
-use crate::render::Scene;
+use crate::render::{Scene, motion::timing};
 use mirui::anim::{PlayMode, Tween, ease};
 use mirui::app::RendererFactory;
 use mirui::prelude::*;
@@ -14,16 +14,16 @@ pub struct Feedback {
 impl Default for Feedback {
     fn default() -> Self {
         Self {
-            press: Tween::ease_to(Fixed::ZERO, Fixed::ZERO, 180),
+            press: Tween::ease_to(Fixed::ZERO, Fixed::ZERO, timing::PRESS_FADE_MS),
             activity: std::array::from_fn(|index| {
                 let mut tween = Tween::new(
                     Fixed::ZERO,
                     Fixed::ONE,
-                    450,
+                    timing::ACTIVITY_MS,
                     &ease::LINEAR,
                     PlayMode::PingPong,
                 );
-                tween.elapsed_ms = index as u16 * 105;
+                tween.elapsed_ms = index as u16 * timing::ACTIVITY_STAGGER_MS;
                 tween
             }),
             last_ms: 0,
@@ -36,7 +36,7 @@ impl Feedback {
     pub fn press(&mut self, now: u64) {
         self.press_sequence = self.press_sequence.wrapping_add(1);
         self.last_ms = now;
-        self.press = Tween::ease_to(Fixed::ONE, Fixed::ZERO, 180);
+        self.press = Tween::ease_to(Fixed::ONE, Fixed::ZERO, timing::PRESS_FADE_MS);
     }
 
     pub fn apply(&mut self, scene: &Scene, now: u64) {

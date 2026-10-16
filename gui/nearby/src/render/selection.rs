@@ -4,8 +4,18 @@ use mirui::ui::widgets::FollowBounds;
 use mirui::ui::{Hidden, Parent};
 
 #[component]
-pub(super) struct FocusTarget {
-    pub index: usize,
+pub(super) enum FocusTarget {
+    Fixed(usize),
+    Row(Signal<usize>),
+}
+
+impl FocusTarget {
+    pub fn index(&self) -> usize {
+        match self {
+            Self::Fixed(index) => *index,
+            Self::Row(index) => index.get_untracked(),
+        }
+    }
 }
 
 #[component]
@@ -31,6 +41,45 @@ pub(super) fn contains(
     }
 }
 
+fn resolve<'a>(
+    frame: &SelectionFrame,
+    targets: impl IntoIterator<Item = (Entity, &'a FocusTarget)>,
+    parent: impl Fn(Entity) -> Option<Entity>,
+) -> Option<Entity> {
+    let selected = frame.state.selected();
+    targets.into_iter().find_map(|(node, target)| {
+        (selected == Some(target.index()) && contains(frame.body, node, &parent)).then_some(node)
+    })
+}
+
+enum FocusChange {
+    Bounds(FollowBounds),
+    Show,
+    Hide,
+}
+
+fn follow(
+    node: Option<Entity>,
+    current: Option<&FollowBounds>,
+    hidden: bool,
+    mut apply: impl FnMut(FocusChange),
+) {
+    if let Some(target) = node {
+        if current.is_none_or(|bounds| bounds.target != target) {
+            let mut next = current
+                .copied()
+                .unwrap_or_else(|| FollowBounds::new(target).with_transition(mirui::anim::SNAPPY));
+            next.target = target;
+            apply(FocusChange::Bounds(next));
+        }
+        if hidden {
+            apply(FocusChange::Show);
+        }
+    } else if !hidden {
+        apply(FocusChange::Hide);
+    }
+}
+
 #[event]
 fn initialize(
     node: entity!(),
@@ -42,19 +91,12 @@ fn initialize(
     let Some(frame) = frames.get(node) else {
         return;
     };
-    let selected = frame.state.selected();
-    for (entity, target) in targets {
-        if selected == Some(target.index)
-            && contains(frame.body, entity, |e| parents.get(e).map(|p| p.0))
-        {
-            commands.insert(
-                node,
-                FollowBounds::new(entity).with_transition(mirui::anim::SNAPPY),
-            );
-            return;
-        }
-    }
-    commands.insert(node, Hidden);
+    let target = resolve(frame, targets, |e| parents.get(e).map(|p| p.0));
+    follow(target, None, false, |change| match change {
+        FocusChange::Bounds(bounds) => commands.insert(node, bounds),
+        FocusChange::Show => commands.remove::<Hidden>(node),
+        FocusChange::Hide => commands.insert(node, Hidden),
+    });
 }
 
 #[view(component = SelectionFrame, attach = initialize::callback())]
@@ -64,7 +106,7 @@ pub(super) fn frame() {}
 fn initialize_target(
     node: entity!(),
     targets: query!(FocusTarget),
-    frames: query!(Entity, SelectionFrame),
+    frames: query!(Entity, SelectionFrame, optional Hidden),
     followers: query!(FollowBounds),
     parents: query!(Parent),
     commands: commands!(),
@@ -72,23 +114,20 @@ fn initialize_target(
     let Some(target) = targets.get(node) else {
         return;
     };
-    for (entity, frame) in frames {
-        if frame.state.selected() == Some(target.index)
+    for (entity, frame, hidden) in frames {
+        if frame.state.selected() == Some(target.index())
             && contains(frame.body, node, |e| parents.get(e).map(|p| p.0))
         {
-            if let Some(bounds) = followers.get(entity) {
-                if bounds.target != node {
-                    let mut next = *bounds;
-                    next.target = node;
-                    commands.insert(entity, next);
-                }
-            } else {
-                commands.insert(
-                    entity,
-                    FollowBounds::new(node).with_transition(mirui::anim::SNAPPY),
-                );
-            }
-            commands.remove::<Hidden>(entity);
+            follow(
+                Some(node),
+                followers.get(entity),
+                hidden.is_some(),
+                |change| match change {
+                    FocusChange::Bounds(bounds) => commands.insert(entity, bounds),
+                    FocusChange::Show => commands.remove::<Hidden>(entity),
+                    FocusChange::Hide => commands.insert(entity, Hidden),
+                },
+            );
         }
     }
 }
@@ -106,37 +145,19 @@ pub(super) fn update(
     commands: commands!(),
 ) {
     let page = state.page_key();
-    let selected = state.selected();
     let Some((entity, frame, hidden)) = frames.into_iter().find(|(_, frame, _)| frame.page == page)
     else {
         return;
     };
-    let mut target = None;
-    for (node, marker) in targets {
-        if selected == Some(marker.index)
-            && contains(frame.body, node, |e| parents.get(e).map(|p| p.0))
-        {
-            target = Some(node);
-            break;
-        }
-    }
-    if let Some(target) = target {
-        if let Some(bounds) = followers.get(entity) {
-            if bounds.target != target {
-                let mut next = *bounds;
-                next.target = target;
-                commands.insert(entity, next);
-            }
-        } else {
-            commands.insert(
-                entity,
-                FollowBounds::new(target).with_transition(mirui::anim::SNAPPY),
-            );
-        }
-        if hidden.is_some() {
-            commands.remove::<Hidden>(entity);
-        }
-    } else if hidden.is_none() {
-        commands.insert(entity, Hidden);
-    }
+    let target = resolve(frame, targets, |e| parents.get(e).map(|p| p.0));
+    follow(
+        target,
+        followers.get(entity),
+        hidden.is_some(),
+        |change| match change {
+            FocusChange::Bounds(bounds) => commands.insert(entity, bounds),
+            FocusChange::Show => commands.remove::<Hidden>(entity),
+            FocusChange::Hide => commands.insert(entity, Hidden),
+        },
+    );
 }

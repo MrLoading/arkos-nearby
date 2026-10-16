@@ -14,9 +14,10 @@ mod composition;
 mod copy;
 mod font;
 mod lists;
-mod motion;
+pub(crate) mod motion;
 mod pages;
 mod pixel;
+mod rows;
 mod selection;
 mod sessions;
 mod state;
@@ -44,9 +45,13 @@ pub fn install<B: Surface, F: RendererFactory<B>>(app: &mut App<B, F>) -> Result
     app.with_widget(page_view::view::<PageKey>());
     app.with_widget(selection::target::view());
     app.with_widget(selection::frame::view());
-    app.with_widget(pixel::sprite::view());
+    app.with_widget(pixel::choice_sprite::view());
+    app.with_widget(pixel::walker_sprite::view());
+    app.with_widget(pixel::session_sprite::view());
+    app.with_widget(pixel::signal_sprite::view());
+    app.with_widget(pixel::search_sprite::view());
     app.with_widget(pixel::scenery::view());
-    app.with_widget(cache::text_cache::view());
+    app.with_widget(cache::gpu_layer::view());
     font::install(app)?;
     state::install(app);
     Ok(())

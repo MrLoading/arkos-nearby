@@ -1,6 +1,6 @@
 use super::{
     Section, StaticCache,
-    cache::GpuTextCache,
+    cache::GpuLayerCache,
     pixel::Scenery,
     state::DisplayState,
     style::*,
@@ -23,15 +23,10 @@ pub(super) fn header(view: &View, state: model!(DisplayState), metrics: Metrics)
     };
     ui! {
         Row (
-            height: if metrics.tiny { 44 } else if metrics.compact { 52 } else { 88 },
+            height: metrics.header_height(),
             shrink: 0.0,
             column_gap: metrics.gap + 4,
-            padding: Padding {
-                top: 4.into(),
-                bottom: 4.into(),
-                left: (if metrics.compact { 16 } else { 24 }).into(),
-                right: (if metrics.compact { 16 } else { 24 }).into(),
-            },
+            padding: metrics.header_padding(),
             bg_color: DEEP,
             align: AlignItems::Center
         ) [
@@ -39,8 +34,8 @@ pub(super) fn header(view: &View, state: model!(DisplayState), metrics: Metrics)
             Scenery::Header,
         ] {
             View (
-                width: if metrics.compact { 30 } else { 48 },
-                height: if metrics.compact { 30 } else { 48 },
+                width: metrics.logo_size(),
+                height: metrics.logo_size(),
                 shrink: 0.0
             ) [
                 Scenery::Logo,
@@ -85,7 +80,7 @@ pub(super) fn header(view: &View, state: model!(DisplayState), metrics: Metrics)
                 paragraph: paragraph(Center, 1)
             ) [
                 FONT_PAINT,
-                GpuTextCache,
+                GpuLayerCache,
             ]
         }
     }
@@ -95,18 +90,18 @@ pub(super) fn header(view: &View, state: model!(DisplayState), metrics: Metrics)
 pub(super) fn footer(view: &View, state: model!(DisplayState), metrics: Metrics) -> Entity {
     ui! {
         Row (
-            height: if metrics.compact { 20 } else { 32 },
+            height: metrics.footer_height(),
             shrink: 0.0,
             column_gap: metrics.gap,
             align: AlignItems::Center
         ) [
             Section::Footer,
-            GpuTextCache,
+            GpuLayerCache,
         ] {
             Text (
                 text: ${ if state.confirm_visible() { "A" } else { "" } },
-                width: if metrics.compact { 20 } else { 25 },
-                height: if metrics.compact { 20 } else { 25 },
+                width: metrics.keycap_size(),
+                height: metrics.keycap_size(),
                 shrink: 0.0,
                 bg_color: ${ if state.confirm_visible() { ACCENT } else { BACKGROUND } },
                 font: font(metrics.small),

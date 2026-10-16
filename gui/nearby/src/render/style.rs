@@ -5,10 +5,17 @@ pub(super) const FONT_PAINT: mirui::ui::dirty::PaintInflate =
 pub(super) const FONT: FontToken = FontToken::Custom("nearby_menu");
 pub(super) const TITLE_FONT: FontToken = FontToken::Custom("nearby_title");
 pub(super) const TITLE_SIZE: u16 = 24;
+pub(super) const BODY_SIZE: u16 = 12;
+pub(super) const ROW_LEADING: i32 = 2;
+pub(super) const LABEL_LEADING: i32 = 6;
+pub(super) const FOCUS_BORDER: i32 = 2;
+// Outsets are percentages of the followed widget, independent of its dimensions.
+pub(super) const FOCUS_OUTSET_X_PERCENT: f32 = 3.25;
+pub(super) const FOCUS_OUTSET_Y_PERCENT: f32 = 3.5;
 
 pub(super) fn font(size: u16) -> FontToken {
     match size {
-        12 => FONT,
+        BODY_SIZE => FONT,
         TITLE_SIZE => TITLE_FONT,
         _ => unreachable!("Pixel text requires a native font size"),
     }
@@ -44,16 +51,93 @@ pub(super) struct Metrics {
 }
 
 impl Metrics {
+    fn sized(self, tiny: i32, compact: i32, regular: i32) -> i32 {
+        if self.tiny {
+            tiny
+        } else if self.compact {
+            compact
+        } else {
+            regular
+        }
+    }
+
+    pub fn header_height(self) -> i32 {
+        self.sized(44, 52, 88)
+    }
+    pub fn logo_size(self) -> i32 {
+        self.sized(30, 30, 48)
+    }
+    pub fn keycap_size(self) -> i32 {
+        self.sized(20, 20, 25)
+    }
+    pub fn footer_height(self) -> i32 {
+        self.sized(20, 20, 32)
+    }
+    pub fn shadow_height(self) -> i32 {
+        self.sized(3, 3, 4)
+    }
+    pub fn row_height(self) -> i32 {
+        self.sized(40, 44, 68)
+    }
+    pub fn row_min_height(self) -> i32 {
+        i32::from(self.row_title + self.row_detail)
+            + ROW_LEADING * 2
+            + self.sized(6, 6, 12)
+            + self.shadow_height()
+    }
+    pub fn row_padding(self) -> Padding {
+        Padding::all(self.sized(3, 3, 6))
+    }
+    pub fn rail_width(self) -> i32 {
+        self.sized(2, 2, 3)
+    }
+    pub fn rule_height(self) -> i32 {
+        self.sized(2, 2, 3)
+    }
+    pub fn choice_art_height(self) -> i32 {
+        self.sized(28, 40, 80)
+    }
+    pub fn walker_height(self) -> i32 {
+        self.sized(22, 38, 46)
+    }
+    pub fn choice_gap(self) -> i32 {
+        self.gap + 14
+    }
+    pub fn card_padding(self) -> Padding {
+        Padding {
+            top: FOCUS_BORDER.into(),
+            bottom: self.sized(4, 4, 8).into(),
+            left: FOCUS_BORDER.into(),
+            right: FOCUS_BORDER.into(),
+        }
+    }
+    pub fn header_padding(self) -> Padding {
+        Padding {
+            top: 4.into(),
+            bottom: 4.into(),
+            left: self.sized(16, 16, 24).into(),
+            right: self.sized(16, 16, 24).into(),
+        }
+    }
+    pub fn page_padding(self) -> Padding {
+        Padding {
+            top: self.sized(8, 8, 12).into(),
+            bottom: self.sized(4, 4, 8).into(),
+            left: self.sized(16, 16, 32).into(),
+            right: self.sized(16, 16, 32).into(),
+        }
+    }
+
     pub(super) fn for_height(height: u16) -> Self {
         let compact = height < 400;
         Self {
             compact,
             tiny: height < 300,
-            title: if compact { 12 } else { TITLE_SIZE },
-            body: 12,
-            small: 12,
-            row_title: if compact { 12 } else { 24 },
-            row_detail: 12,
+            title: if compact { BODY_SIZE } else { TITLE_SIZE },
+            body: BODY_SIZE,
+            small: BODY_SIZE,
+            row_title: if compact { BODY_SIZE } else { TITLE_SIZE },
+            row_detail: BODY_SIZE,
             gap: if compact { 3 } else { 8 },
             inset: if compact { 8 } else { 18 },
         }

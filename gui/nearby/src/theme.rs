@@ -8,6 +8,29 @@ use std::path::Path;
 #[cfg(target_os = "linux")]
 pub const SETTINGS: &str = "/opt/arkos-nearby/ui-theme";
 
+pub(crate) mod actor {
+    use mirui::prelude::ColorToken;
+
+    pub const HOST: ColorToken = ColorToken::Custom("actor-host");
+    pub const HOST_LIGHT: ColorToken = ColorToken::Custom("actor-host-light");
+    pub const GUEST: ColorToken = ColorToken::Custom("actor-guest");
+    pub const GUEST_LIGHT: ColorToken = ColorToken::Custom("actor-guest-light");
+    pub const SKIN: ColorToken = ColorToken::Custom("actor-skin");
+    pub const BOOTS: ColorToken = ColorToken::Custom("actor-boots");
+    pub const PACK: ColorToken = ColorToken::Custom("actor-pack");
+
+    // Player identity colors stay consistent when the campsite palette changes.
+    pub const COLORS: [(ColorToken, u32); 7] = [
+        (HOST, 0xdb603d),
+        (HOST_LIGHT, 0xffad68),
+        (GUEST, 0x6477cf),
+        (GUEST_LIGHT, 0xb5c7ff),
+        (SKIN, 0xffe0aa),
+        (BOOTS, 0x302b38),
+        (PACK, 0xf4c85f),
+    ];
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Palette {
     #[default]
@@ -100,7 +123,7 @@ impl Palette {
             OnPrimary,
         ];
         let mut theme = Theme::light().with_info(ThemeInfo::new(self.id(), self.id(), ""));
-        for (token, rgb) in tokens.into_iter().zip(values) {
+        for (token, rgb) in tokens.into_iter().zip(values).chain(actor::COLORS) {
             theme.set(
                 token,
                 Color::rgb((rgb >> 16) as u8, (rgb >> 8) as u8, rgb as u8),

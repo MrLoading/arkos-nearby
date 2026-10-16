@@ -52,28 +52,20 @@ fn page_contents(view: &View, state: model!(DisplayState), metrics: Metrics) -> 
         ] {
             View (
                 position: Position::Absolute,
-                left: ${
-                    Dimension::Percent(
-                        Fixed::from_f32(-state.motion().expansion().0 as f32 * 100.0 / 276.0),
-                    )
-                },
+                left: ${ Dimension::Percent(-state.motion().expansion().0) },
                 width: ${
                     Dimension::Percent(
-                        Fixed::from_f32(100.0 + state.motion().expansion().0 as f32 * 200.0 / 276.0),
+                        Fixed::from_int(100) + state.motion().expansion().0 * Fixed::from_int(2),
                     )
                 },
-                top: ${
-                    Dimension::Percent(
-                        Fixed::from_f32(-state.motion().expansion().1 as f32 * 100.0 / 196.0),
-                    )
-                },
+                top: ${ Dimension::Percent(-state.motion().expansion().1) },
                 height: ${
                     Dimension::Percent(
-                        Fixed::from_f32(100.0 + state.motion().expansion().1 as f32 * 200.0 / 196.0),
+                        Fixed::from_int(100) + state.motion().expansion().1 * Fixed::from_int(2),
                     )
                 },
                 border_color: ACCENT,
-                border_width: 2
+                border_width: FOCUS_BORDER
             ) [
                 mirui::ui::IgnoreHitTest,
             ]

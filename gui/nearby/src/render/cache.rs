@@ -1,7 +1,7 @@
 use mirui::prelude::*;
 
 #[component]
-pub(super) struct GpuTextCache;
+pub(super) struct GpuLayerCache;
 
 #[event]
 fn attach(node: entity!(), commands: commands!()) {
@@ -10,5 +10,5 @@ fn attach(node: entity!(), commands: commands!()) {
     }
 }
 
-#[view(component = GpuTextCache, attach = attach::callback())]
-pub(super) fn text_cache() {}
+#[view(component = GpuLayerCache, attach = attach::callback())]
+pub(super) fn gpu_layer() {}

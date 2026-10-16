@@ -1,8 +1,8 @@
-use super::pixel::Kind::Walker;
+use super::pixel::Stage::Walker;
 use super::{
     Section,
-    cache::GpuTextCache,
-    pixel::{self, Kind, Scenery, art},
+    cache::GpuLayerCache,
+    pixel::{self, Scenery, art},
     selection::FocusTarget,
     state::DisplayState,
     style::*,
@@ -33,7 +33,7 @@ pub(super) fn choice(view: &View, state: model!(DisplayState), metrics: Metrics)
     };
     ui! {
         Column (grow: 1.0, min_height: 0, row_gap: metrics.gap) {
-            Row (grow: 1.0, min_height: 0, column_gap: metrics.gap + 14) [
+            Row (grow: 1.0, min_height: 0, column_gap: metrics.choice_gap()) [
                 Section::FocusList,
             ] {
                 walk cards.into_iter() with card {
@@ -47,29 +47,22 @@ pub(super) fn choice(view: &View, state: model!(DisplayState), metrics: Metrics)
                             grow: 1.0,
                             min_width: 0,
                             min_height: 0,
-                            padding: Padding {
-                                top: 2.into(),
-                                bottom: (if metrics.compact { 4 } else { 8 }).into(),
-                                left: 2.into(),
-                                right: 2.into(),
-                            },
+                            padding: metrics.card_padding(),
                             row_gap: metrics.gap,
                             bg_color: ${ state.motion().card_color(card.0) }
                         ) [
-                            FocusTarget { index: card.0 },
+                            FocusTarget::Fixed(card.0),
                         ] {
                             View (
                                 grow: 1.0,
-                                min_height: if metrics.tiny { 28 } else if metrics.compact { 40 } else { 80 },
+                                min_height: metrics.choice_art_height(),
                                 clip_children: true
                             ) [
                                 Scenery::Landscape,
-                                pixel::Sprite {
+                                pixel::ChoiceSprite {
                                     state: state.clone(),
-                                    kind: Kind::Choice {
-                                        index: card.0,
-                                        mode: view.page == Page::Mode,
-                                    },
+                                    index: card.0,
+                                    mode: view.page == Page::Mode,
                                 },
                             ] {
                                 Text (
@@ -79,14 +72,14 @@ pub(super) fn choice(view: &View, state: model!(DisplayState), metrics: Metrics)
                                     top: 6,
                                     width: 24,
                                     height: 20,
-                                    font: font(12),
-                                    font_size: 12,
+                                    font: font(metrics.small),
+                                    font_size: metrics.small,
                                     bg_color: BACKGROUND,
                                     text_color: SECONDARY,
                                     paragraph: paragraph(Center, 1)
                                 ) [
                                     FONT_PAINT,
-                                    GpuTextCache,
+                                    GpuLayerCache,
                                 ]
                             }
                             label (card.1, metrics.title, FOREGROUND, Center)
@@ -102,7 +95,7 @@ pub(super) fn choice(view: &View, state: model!(DisplayState), metrics: Metrics)
                                     paragraph: paragraph(Center, 2)
                                 ) [
                                     FONT_PAINT,
-                                    GpuTextCache,
+                                    GpuLayerCache,
                                 ]
                             }
                         }
@@ -110,7 +103,7 @@ pub(super) fn choice(view: &View, state: model!(DisplayState), metrics: Metrics)
                     }
                 }
             }
-            art (state, Walker, if metrics.tiny { 22 } else if metrics.compact { 38 } else { 46 })
+            art (state, Walker, metrics.walker_height())
         }
     }
 }

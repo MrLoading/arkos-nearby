@@ -1,13 +1,13 @@
 {
   "schema": 1,
-  "runtime_version": "0.5.0",
+  "runtime_version": "0.5.1",
   "profile": "arkos4clone-4.4.189-rtl8188eu",
   "kernel_sha256": "73a123c06c67c002605bef637ef458aa43448a501c48ce27756f16e846d57f7a",
   "renderer": {
     "version": "0.50.0",
     "mirx_version": "0.50.0",
-    "sha256": "db4007efe59ebf3cc222acd3670a744c410dbf3232e35099958ca59909f677e4",
-    "source_sha256": "860abc311d81109bdd0f4a357cfa74a8ded24f2ea13a1334f383bc8789cefd25",
+    "sha256": "f47ec9997b7f71276ab61f9eafeb18fdf97090cef2c2714fa544a95be1bc15c1",
+    "source_sha256": "fc8862c92aee259feb3f33d682b0bd10bf41a2a6593289d550b8d9365de7e157",
     "cargo_lock_sha256": "ee7e9da43809926f8d748efb57780f97abcbf11c2e34da80d8eaf9e1f7be3585",
     "mirui_crate_sha256": "9060a86a32061f73d8632ba41fc0d1ed2f68aa6e9d9919f79d589aa763609284",
     "mirui_macros_crate_sha256": "5035b0153ded42ab4e377b7ac0723412ed336c0ca33175926a33919c7b8f5140",
