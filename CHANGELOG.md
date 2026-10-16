@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+## [0.6.2] - 2026-10-16
+
+- Start page entrance animations when the interface is ready to display.
+
 ## [0.6.1] - 2026-10-16
 
 - Ensure the audio probe plays its confirmation cue.

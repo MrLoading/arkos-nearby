@@ -61,9 +61,7 @@ pub(super) struct SessionSprite {
 #[component]
 pub(super) struct SignalSprite {
     pub state: model!(DisplayState),
-    pub index: usize,
-    pub strength: u8,
-    pub available: bool,
+    pub row: model!(super::rows::Row),
 }
 
 #[component]
@@ -585,7 +583,7 @@ pub(super) fn session_sprite(
 
 #[view(component = SignalSprite, priority = 60)]
 pub(super) fn signal_sprite(
-    component: component!(),
+    row: model!(component.row, watch(index, strength, available)),
     state: model!(component.state, watch(signal_motion)),
     paint: paint!(),
     theme: res!(Theme),
@@ -593,9 +591,9 @@ pub(super) fn signal_sprite(
     let rect = paint.rect();
     draw(
         Kind::Signal {
-            index: component.index,
-            strength: component.strength,
-            available: component.available,
+            index: row.index,
+            strength: row.strength,
+            available: row.available,
         },
         rect.w.to_int(),
         rect.h.to_int(),

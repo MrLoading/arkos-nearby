@@ -1,3 +1,4 @@
+use super::state::PageKey;
 use super::{
     Section, StaticCache,
     cache::GpuLayerCache,
@@ -6,14 +7,14 @@ use super::{
     style::*,
     widgets::{keycap, label, paragraph},
 };
-use crate::model::{Page, View};
+use crate::model::Page;
 use mirui::prelude::*;
 use mirui::ui::OffscreenRender;
 use mirui::ui::widgets::Text;
 use mirui::ui::widgets::TextAlign::{Center, End, Start};
 
 #[compose]
-pub(super) fn header(view: &View, state: model!(DisplayState), metrics: Metrics) -> Entity {
+pub(super) fn header(view: PageKey, state: model!(DisplayState), metrics: Metrics) -> Entity {
     let step = if view.page == Page::Mode {
         "选择模式".into()
     } else if view.page == Page::Games {
@@ -87,7 +88,7 @@ pub(super) fn header(view: &View, state: model!(DisplayState), metrics: Metrics)
 }
 
 #[compose]
-pub(super) fn footer(view: &View, state: model!(DisplayState), metrics: Metrics) -> Entity {
+pub(super) fn footer(view: PageKey, state: model!(DisplayState), metrics: Metrics) -> Entity {
     ui! {
         Row (
             height: metrics.footer_height(),

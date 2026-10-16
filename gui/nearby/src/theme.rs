@@ -1,5 +1,3 @@
-#[cfg(any(target_os = "linux", test))]
-use crate::model::{Page, View};
 use mirui::prelude::*;
 use mirui::ui::theme::{Theme, ThemeInfo};
 #[cfg(any(target_os = "linux", test))]
@@ -63,11 +61,6 @@ impl Palette {
             Self::Sunset => Self::Night,
             Self::Night => Self::Forest,
         }
-    }
-
-    #[cfg(any(target_os = "linux", test))]
-    pub fn can_switch(view: &View) -> bool {
-        matches!(view.page, Page::Mode | Page::Choice) && !view.busy
     }
 
     #[cfg(any(target_os = "linux", test))]

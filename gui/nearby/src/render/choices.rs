@@ -1,4 +1,5 @@
 use super::pixel::Stage::Walker;
+use super::state::PageKey;
 use super::{
     Section,
     cache::GpuLayerCache,
@@ -8,13 +9,13 @@ use super::{
     style::*,
     widgets::{label, paragraph, shadow},
 };
-use crate::model::{Page, View};
+use crate::model::Page;
 use mirui::prelude::*;
 use mirui::ui::widgets::Text;
 use mirui::ui::widgets::TextAlign::Center;
 
 #[compose]
-pub(super) fn choice(view: &View, state: model!(DisplayState), metrics: Metrics) -> Entity {
+pub(super) fn choice(view: PageKey, state: model!(DisplayState), metrics: Metrics) -> Entity {
     let cards = if view.page == Page::Mode {
         [
             (0, "仅组网", "连接附近的掌机"),
@@ -51,7 +52,7 @@ pub(super) fn choice(view: &View, state: model!(DisplayState), metrics: Metrics)
                             row_gap: metrics.gap,
                             bg_color: ${ state.motion().card_color(card.0) }
                         ) [
-                            FocusTarget::Fixed(card.0),
+                            FocusTarget::fixed(card.0),
                         ] {
                             View (
                                 grow: 1.0,

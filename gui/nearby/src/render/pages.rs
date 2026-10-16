@@ -1,3 +1,4 @@
+use super::state::PageKey;
 use super::{
     Section,
     cache::GpuLayerCache,
@@ -10,12 +11,12 @@ use super::{
     style::*,
     widgets::paragraph,
 };
-use crate::model::{Page, View};
+use crate::model::Page;
 use mirui::prelude::*;
 use mirui::ui::widgets::{Text, TextAlign::Start};
 
 #[compose]
-pub(super) fn page(view: &View, state: model!(DisplayState), metrics: Metrics) -> Entity {
+pub(super) fn page(view: PageKey, state: model!(DisplayState), metrics: Metrics) -> Entity {
     ui! {
         Column (
             grow: 1.0,
@@ -103,20 +104,20 @@ pub(super) fn page(view: &View, state: model!(DisplayState), metrics: Metrics) -
                         GpuLayerCache,
                     ]
                     if view.network_only && matches!(view.page, Page::Host | Page::Joined) {
-                        network_panel (view, state, metrics)
+                        network_panel (state, metrics)
                     } else {
                         match view.page {
                             Page :: Choice | Page :: Mode => {
                                 choice (view, state, metrics)
                             }
                             Page :: Host => {
-                                host (view, state, metrics)
+                                host (state, metrics)
                             }
                             Page :: Rooms => {
                                 rooms (state, metrics)
                             }
                             Page :: Joined => {
-                                joined (view, state, metrics)
+                                joined (state, metrics)
                             }
                             Page :: Leaving => {
                                 leaving (state, metrics)

@@ -220,3 +220,62 @@ fn audio_controls_and_repeated_state_cannot_replay_an_input() {
     drop(app);
     assert!(audio.state().is_none());
 }
+
+#[test]
+fn settings_effects_preserve_confirmation_and_existing_preference_files() {
+    use crate::settings::SoundPreferences;
+    use crate::theme::Palette;
+    let (mut app, _sound, sink) = setup();
+    crate::render::install(&mut app).unwrap();
+    let settings = crate::render::settings(&mut app);
+    let directory = std::env::temp_dir().join(format!("nearby-settings-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).unwrap();
+    let theme_path = directory.join("ui-theme");
+    let sound_path = directory.join("ui-sound.json");
+    std::fs::write(&theme_path, "sunset\n").unwrap();
+    std::fs::write(&sound_path, r#"{"enabled":true,"gain":81}"#).unwrap();
+    let preferences = SoundPreferences::load(&sound_path);
+    settings.restore(Palette::load(&theme_path), preferences);
+    let confirmation = app.audio().unwrap();
+    crate::settings::connect(
+        &settings,
+        app.audio().unwrap(),
+        theme_path.clone(),
+        sound_path.clone(),
+        move || play(&confirmation, Some(Cue::Confirm)),
+    )
+    .unwrap();
+    sink.0.borrow_mut().clear();
+    settings.restore(Palette::Sunset, preferences);
+    assert!(sink.0.borrow().is_empty());
+    settings.cycle_theme();
+    app.render().unwrap();
+    assert_eq!(Palette::load(&theme_path), Palette::Night);
+    assert!(
+        sink.0
+            .borrow()
+            .iter()
+            .any(|command| matches!(command, AudioCommand::Play { .. }))
+    );
+    sink.0.borrow_mut().clear();
+    let muted = SoundPreferences {
+        enabled: false,
+        gain: 73,
+    };
+    settings.set_sound(muted);
+    app.render().unwrap();
+    assert_eq!(SoundPreferences::load(&sound_path), muted);
+    assert_eq!(app.audio().unwrap().state().unwrap().master_gain, 73);
+    assert!(app.audio().unwrap().state().unwrap().muted);
+    sink.0.borrow_mut().clear();
+    settings.set_sound(muted);
+    app.render().unwrap();
+    assert!(
+        !sink
+            .0
+            .borrow()
+            .iter()
+            .any(|command| matches!(command, AudioCommand::Play { .. }))
+    );
+    std::fs::remove_dir_all(directory).unwrap();
+}

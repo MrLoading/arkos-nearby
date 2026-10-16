@@ -4,17 +4,26 @@ use mirui::ui::widgets::FollowBounds;
 use mirui::ui::{Hidden, Parent};
 
 #[component]
-pub(super) enum FocusTarget {
-    Fixed(usize),
-    Row(Signal<usize>),
+pub(super) struct FocusTarget {
+    fixed: usize,
+    row: model!(optional super::rows::Row),
 }
 
 impl FocusTarget {
-    pub fn index(&self) -> usize {
-        match self {
-            Self::Fixed(index) => *index,
-            Self::Row(index) => index.get_untracked(),
+    pub fn fixed(index: usize) -> Self {
+        Self {
+            fixed: index,
+            row: None,
         }
+    }
+    pub fn row(row: super::rows::RowHandle) -> Self {
+        Self {
+            fixed: 0,
+            row: Some(row),
+        }
+    }
+    pub fn index(&self) -> usize {
+        self.row.as_ref().map_or(self.fixed, |row| row.index())
     }
 }
 

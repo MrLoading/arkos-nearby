@@ -1,6 +1,5 @@
 use super::*;
 use super::{copy::*, selection::FocusTarget};
-use crate::feedback::Feedback;
 use crate::model::{GameRow, Page, Phase, RoomRow};
 use mirui::core::model::ModelHandle;
 use mirui::render::texture::ColorFormat;
@@ -73,13 +72,12 @@ fn retained_lists_start_below_status_at_every_row_count() {
             current.rooms.truncate(1);
             current.entries.truncate(1);
             let mut scene = draw(&mut app, &current).unwrap();
-            let mut feedback = Feedback::default();
             for (step, count) in [1, 4, 2, 0, 1].into_iter().enumerate() {
                 current = view(page);
                 current.rooms.truncate(count);
                 current.entries.truncate(count);
                 update(&mut scene, &current).unwrap();
-                paint_at(&mut app, &mut feedback, &scene, (step as u64 + 1) * 1000);
+                paint_at(&mut app, &scene, (step as u64 + 1) * 1000);
                 if page == Page::Rooms {
                     assert_eq!(confirm_text(&current), if count == 0 { "" } else { "加入" });
                 }
@@ -110,12 +108,11 @@ fn theme_changes_preserve_scene_state_and_refresh_cached_pixels() {
         let mut scene = draw(&mut app, &current).unwrap();
         let root = app.root;
         let page = body(&app);
-        let mut feedback = Feedback::default();
-        paint_at(&mut app, &mut feedback, &scene, 1000);
+        paint_at(&mut app, &scene, 1000);
         let selection = focus_rect(&app);
         for index in 1..=3 {
             assert!(cycle_theme(&mut app, &mut scene).unwrap().is_some());
-            paint_at(&mut app, &mut feedback, &scene, 1000 + index * 100);
+            paint_at(&mut app, &scene, 1000 + index * 100);
             assert_eq!(app.root, root);
             assert_eq!(body(&app), page);
             assert_eq!(focus_rect(&app), selection);
@@ -164,17 +161,12 @@ fn focus_rect(app: &TestApp) -> Option<[i32; 4]> {
     ])
 }
 
-fn paint_at<B: FramebufferAccess>(
-    app: &mut App<B>,
-    feedback: &mut Feedback,
-    scene: &Scene,
-    time: u64,
-) {
+fn paint_at<B: FramebufferAccess>(app: &mut App<B>, _scene: &Scene, time: u64) {
     let mut current = now_ns() / 1_000_000;
     while current < time {
         current = (current + 16).min(time);
         TIME.with(|clock| clock.set(current * 1_000_000));
-        feedback.paint(app, scene, current).unwrap();
+        super::paint_at(app, current).unwrap();
     }
 }
 
@@ -319,9 +311,8 @@ fn dynamic_updates_preserve_static_caches_and_one_model_registration() {
         let mut next = initial.clone();
         next.status = "正在准备".into();
         update(&mut scene, &next).unwrap();
-        let mut motion = Feedback::default();
 
-        paint_at(&mut app, &mut motion, &scene, 70);
+        paint_at(&mut app, &scene, 70);
         assert_eq!(cache_generations(&app), generations, "{page:?}");
         let previous_root = app.root.unwrap();
         let previous_page = body(&app);
@@ -334,7 +325,7 @@ fn dynamic_updates_preserve_static_caches_and_one_model_registration() {
             }),
         )
         .unwrap();
-        paint_at(&mut app, &mut motion, &next_scene, 1500);
+        paint_at(&mut app, &next_scene, 1500);
         assert_eq!(app.root, Some(previous_root));
         assert!(app.world.is_alive(previous_root));
         assert!(!app.world.is_alive(previous_page));
@@ -375,8 +366,7 @@ fn text_fields_invalidate_their_own_bindings_and_old_page_bindings_are_released(
     );
     scene.navigation_intent(false);
     scene.state.present(&view(Page::Unavailable));
-    let mut feedback = Feedback::default();
-    paint_at(&mut app, &mut feedback, &scene, 1500);
+    paint_at(&mut app, &scene, 1500);
     assert!(texts.iter().all(|e| !app.world.is_alive(*e)));
     let next_texts: Vec<_> = app
         .world
@@ -477,7 +467,6 @@ fn network_guidance_reserves_space_across_session_transitions() {
             current.network_only = true;
             current.phase = Phase::Creating;
             let mut scene = draw(&mut app, &current).unwrap();
-            let mut feedback = Feedback::default();
             let mut time = 0;
             for phase in [
                 Phase::Creating,
@@ -497,7 +486,7 @@ fn network_guidance_reserves_space_across_session_transitions() {
                     };
                     update(&mut scene, &current).unwrap();
                     time += 100;
-                    paint_at(&mut app, &mut feedback, &scene, time);
+                    paint_at(&mut app, &scene, time);
                     if duplicate {
                         continue;
                     }
@@ -605,7 +594,6 @@ fn reflow_and_reverse_retarget_match_complete_frames_at_every_viewport() {
             let mut view = view(page);
             let mut scene = draw(&mut app, &view).unwrap();
             let original = focus_rect(&app).unwrap();
-            let mut motion = Feedback::default();
 
             for (time, selected, status) in [
                 (
@@ -620,7 +608,7 @@ fn reflow_and_reverse_retarget_match_complete_frames_at_every_viewport() {
                 view.selected = selected;
                 view.status = status.into();
                 update(&mut scene, &view).unwrap();
-                paint_at(&mut app, &mut motion, &scene, time + 16);
+                paint_at(&mut app, &scene, time + 16);
                 if time == 10 {
                     assert_ne!(
                         focus_rect(&app).unwrap()[1],
@@ -631,7 +619,7 @@ fn reflow_and_reverse_retarget_match_complete_frames_at_every_viewport() {
 
                 assert_full_frame_matches(&mut app, &format!("{size:?} {page:?} at {time}"));
             }
-            paint_at(&mut app, &mut motion, &scene, 1500);
+            paint_at(&mut app, &scene, 1500);
             let frame = app
                 .world
                 .query::<selection::SelectionFrame>()
@@ -660,7 +648,6 @@ fn semantic_phase_transitions_match_complete_frames() {
         let mut app = app([640, 480]);
         let mut previous = view(page);
         let mut scene = draw(&mut app, &previous).unwrap();
-        let mut motion = Feedback::default();
         for (i, phase) in [
             Phase::ApprovalPending,
             Phase::PeerPreparing,
@@ -687,7 +674,7 @@ fn semantic_phase_transitions_match_complete_frames() {
             .into();
             update(&mut scene, &next).unwrap();
 
-            paint_at(&mut app, &mut motion, &scene, i as u64 * 300 + 250);
+            paint_at(&mut app, &scene, i as u64 * 300 + 250);
             assert_full_frame_matches(&mut app, &format!("{page:?} {phase:?}"));
             previous = next;
         }
@@ -732,12 +719,11 @@ fn unchanged_idle_frames_do_not_submit_pixels() {
     let mut scene = draw(&mut app, &view).unwrap();
     TIME.with(|clock| clock.set(0));
     app.add_resource(mirui::ecs::MonoClock::new(now_ns));
-    let mut motion = Feedback::default();
 
-    paint_at(&mut app, &mut motion, &scene, 1500);
+    paint_at(&mut app, &scene, 1500);
     pixels.set(0);
     update(&mut scene, &view).unwrap();
-    paint_at(&mut app, &mut motion, &scene, 1800);
+    paint_at(&mut app, &scene, 1800);
 
     assert_eq!(pixels.get(), 0);
 }
@@ -800,10 +786,10 @@ fn translation(app: &TestApp, mut node: Entity) -> Fixed {
     }
 }
 
-fn advance_checked(app: &mut TestApp, feedback: &mut Feedback, scene: &Scene, until: u64) {
+fn advance_checked(app: &mut TestApp, scene: &Scene, until: u64) {
     while now_ns() / 1_000_000 < until {
         let next = (now_ns() / 1_000_000 + 16).min(until);
-        paint_at(app, feedback, scene, next);
+        paint_at(app, scene, next);
         assert_full_frame_matches(app, "interrupted page transition");
     }
 }
@@ -814,33 +800,32 @@ fn rapid_return_reuses_the_page_and_interrupted_navigation_keeps_the_latest_targ
     let mut scene = draw(&mut app, &view(Page::Mode)).unwrap();
     let root = app.root;
     let original = body(&app);
-    let mut feedback = Feedback::default();
     scene.navigation_intent(false);
     update(&mut scene, &view(Page::Choice)).unwrap();
-    advance_checked(&mut app, &mut feedback, &scene, 16);
+    advance_checked(&mut app, &scene, 16);
     let incoming = body(&app);
     let entered_from = translation(&app, incoming);
     assert!(entered_from > Fixed::ZERO);
-    advance_checked(&mut app, &mut feedback, &scene, 64);
+    advance_checked(&mut app, &scene, 64);
     assert!(translation(&app, incoming) < entered_from);
 
     scene.navigation_intent(true);
     update(&mut scene, &view(Page::Mode)).unwrap();
-    advance_checked(&mut app, &mut feedback, &scene, 80);
+    advance_checked(&mut app, &scene, 80);
     assert_eq!(body(&app), original);
-    advance_checked(&mut app, &mut feedback, &scene, 1200);
+    advance_checked(&mut app, &scene, 1200);
     assert_eq!(page_frames(&app), vec![(original, Page::Mode)]);
     assert!(!app.world.is_alive(incoming));
     assert_eq!(app.root, root);
 
     scene.navigation_intent(false);
     update(&mut scene, &view(Page::Choice)).unwrap();
-    advance_checked(&mut app, &mut feedback, &scene, 1216);
+    advance_checked(&mut app, &scene, 1216);
     let retired = page_frames(&app);
     update(&mut scene, &view(Page::Host)).unwrap();
-    advance_checked(&mut app, &mut feedback, &scene, 1232);
+    advance_checked(&mut app, &scene, 1232);
     update(&mut scene, &view(Page::Rooms)).unwrap();
-    advance_checked(&mut app, &mut feedback, &scene, 3000);
+    advance_checked(&mut app, &scene, 3000);
     assert_eq!(page_frames(&app).len(), 1);
     assert_eq!(page_frames(&app)[0].1, Page::Rooms);
     assert!(retired.iter().all(|(node, _)| !app.world.is_alive(*node)));
@@ -854,7 +839,6 @@ fn refreshed_room_rows_keep_the_page_and_rebind_selection_to_live_entities() {
     let mut next = view(Page::Rooms);
     let mut scene = draw(&mut app, &next).unwrap();
     let page = body(&app);
-    let mut feedback = Feedback::default();
     let old_targets: Vec<_> = app
         .world
         .query::<FocusTarget>()
@@ -864,13 +848,13 @@ fn refreshed_room_rows_keep_the_page_and_rebind_selection_to_live_entities() {
     next.rooms.clear();
     next.selected = usize::MAX;
     update(&mut scene, &next).unwrap();
-    advance_checked(&mut app, &mut feedback, &scene, 64);
+    advance_checked(&mut app, &scene, 64);
     assert_eq!(body(&app), page);
     assert!(old_targets.iter().all(|node| !app.world.is_alive(*node)));
     next.rooms = view(Page::Rooms).rooms;
     next.selected = 2;
     update(&mut scene, &next).unwrap();
-    advance_checked(&mut app, &mut feedback, &scene, 1200);
+    advance_checked(&mut app, &scene, 1200);
     assert_eq!(body(&app), page);
     let frame = app
         .world
@@ -891,8 +875,7 @@ fn retained_rows_keep_entities_and_update_contents_indices_and_focus() {
         let mut app = app([640, 480]);
         let mut next = view(page);
         let mut scene = draw(&mut app, &next).unwrap();
-        let mut feedback = Feedback::default();
-        paint_at(&mut app, &mut feedback, &scene, 1000);
+        paint_at(&mut app, &scene, 1000);
         let targets: Vec<_> = app
             .world
             .query::<FocusTarget>()
@@ -918,7 +901,7 @@ fn retained_rows_keep_entities_and_update_contents_indices_and_focus() {
         }
         next.selected = 2;
         update(&mut scene, &next).unwrap();
-        advance_checked(&mut app, &mut feedback, &scene, 1600);
+        advance_checked(&mut app, &scene, 1600);
         assert!(targets.iter().all(|(_, node)| app.world.is_alive(*node)));
         assert!(original_text.iter().all(|node| app.world.is_alive(*node)));
         assert_eq!(app.world.get::<FocusTarget>(first).unwrap().index(), 2);
@@ -963,8 +946,7 @@ fn retained_rows_keep_entities_and_update_contents_indices_and_focus() {
         );
         let mut expected = self::app([640, 480]);
         let expected_scene = draw(&mut expected, &next).unwrap();
-        let mut expected_feedback = Feedback::default();
-        paint_at(&mut expected, &mut expected_feedback, &expected_scene, 1600);
+        paint_at(&mut expected, &expected_scene, 1600);
         assert_eq!(
             app.backend.framebuffer().buf.as_slice(),
             expected.backend.framebuffer().buf.as_slice(),
@@ -979,7 +961,6 @@ fn menu_handoffs_animate_without_blank_frames_in_panel_formats() {
         let mut app = app_with_format([640, 480], format);
         let mut scene = draw(&mut app, &view(Page::Mode)).unwrap();
         let root = app.root;
-        let mut feedback = Feedback::default();
         for (page, network_only, backward) in [
             (Page::Games, false, false),
             (Page::Choice, false, false),
@@ -995,7 +976,7 @@ fn menu_handoffs_animate_without_blank_frames_in_panel_formats() {
             scene.navigation_intent(backward);
             update(&mut scene, &next).unwrap();
             let start = now_ns() / 1_000_000;
-            paint_at(&mut app, &mut feedback, &scene, start + 16);
+            paint_at(&mut app, &scene, start + 16);
             assert_eq!(app.root, root);
             assert_eq!(
                 page_frames(&app).len(),
@@ -1010,7 +991,7 @@ fn menu_handoffs_animate_without_blank_frames_in_panel_formats() {
             });
             while now_ns() / 1_000_000 < start + 480 {
                 let time = now_ns() / 1_000_000 + 16;
-                paint_at(&mut app, &mut feedback, &scene, time);
+                paint_at(&mut app, &scene, time);
                 for y in (0..480).step_by(16) {
                     for x in (0..640).step_by(16) {
                         let color = app.backend.framebuffer().get_pixel(x, y);
@@ -1083,4 +1064,87 @@ fn palettes_define_all_roles_and_legible_action_text() {
             );
         }
     }
+}
+
+#[test]
+fn model_rows_preserve_member_and_sprite_identity_for_live_updates() {
+    let mut app = app([640, 480]);
+    let mut current = view(Page::Rooms);
+    let mut scene = draw(&mut app, &current).unwrap();
+    paint_at(&mut app, &scene, 1600);
+    let before: Vec<_> = scene.state.rooms().entries().collect();
+    let sprites: Vec<_> = app
+        .world
+        .query::<pixel::SignalSprite>()
+        .iter()
+        .map(|(entity, _)| entity)
+        .collect();
+    current.rooms.swap(0, 1);
+    current.rooms[1].signal = 12;
+    current.rooms[1].available = false;
+    update(&mut scene, &current).unwrap();
+    paint_at(&mut app, &scene, 1700);
+    let after: Vec<_> = scene.state.rooms().entries().collect();
+    assert_eq!(after[0].0, before[1].0);
+    assert_eq!(after[1].0, before[0].0);
+    assert_eq!(before[0].1.index(), 1);
+    assert_eq!(before[0].1.strength(), 12);
+    assert!(!before[0].1.available());
+    assert_eq!(
+        app.world
+            .query::<pixel::SignalSprite>()
+            .iter()
+            .map(|(entity, _)| entity)
+            .collect::<Vec<_>>(),
+        sprites
+    );
+    current.rooms.clear();
+    update(&mut scene, &current).unwrap();
+    current = view(Page::Rooms);
+    update(&mut scene, &current).unwrap();
+    assert_ne!(scene.state.rooms().entries().next().unwrap().0, before[0].0);
+}
+
+#[test]
+fn ambiguous_row_keys_keep_unchanged_snapshots_and_retire_changed_rows() {
+    for key in ["", "duplicate"] {
+        let mut app = app([640, 480]);
+        let mut current = view(Page::Rooms);
+        current.rooms.truncate(2);
+        for row in &mut current.rooms {
+            row.key = key.into();
+        }
+        let mut scene = draw(&mut app, &current).unwrap();
+        let before: Vec<_> = scene.state.rooms().entries().map(|(id, _)| id).collect();
+        current.status = "扫描完成".into();
+        update(&mut scene, &current).unwrap();
+        assert_eq!(
+            scene
+                .state
+                .rooms()
+                .entries()
+                .map(|(id, _)| id)
+                .collect::<Vec<_>>(),
+            before
+        );
+        current.rooms[0].signal = 12;
+        update(&mut scene, &current).unwrap();
+        assert!(
+            scene
+                .state
+                .rooms()
+                .entries()
+                .all(|(id, _)| !before.contains(&id))
+        );
+    }
+}
+
+#[test]
+fn entry_motion_starts_at_the_installed_framework_clock() {
+    let mut app = app([640, 480]);
+    TIME.with(|time| time.set(5_000_000_000));
+    let scene = draw(&mut app, &view(Page::Choice)).unwrap();
+    assert_eq!(scene.state.motion().selection, 0);
+    paint_at(&mut app, &scene, 5080);
+    assert_eq!(scene.state.motion().selection, 80);
 }

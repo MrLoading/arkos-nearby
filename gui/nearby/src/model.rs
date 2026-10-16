@@ -82,6 +82,10 @@ pub struct View {
 }
 
 impl View {
+    pub fn can_switch_theme(&self) -> bool {
+        matches!(self.page, Page::Mode | Page::Choice) && !self.busy
+    }
+
     pub fn host_action_enabled(&self) -> bool {
         (self.ready || self.connected || self.phase == Phase::ApprovalPending) && !self.busy
     }

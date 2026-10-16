@@ -58,9 +58,7 @@ pub fn install<B: Surface, F: RendererFactory<B>>(app: &mut App<B, F>) -> Result
 }
 
 pub struct Scene {
-    pub loading: bool,
     state: DisplayHandle,
-    pub colors: mirui::ui::theme::Theme,
 }
 
 impl Scene {
@@ -73,18 +71,13 @@ impl Scene {
         }
     }
 
-    pub fn feedback(&self, stamp: Color, activity: [Color; 3]) {
-        self.state.feedback(stamp, activity);
-    }
-
-    pub fn animate(&self, now: u64, press_sequence: u64) {
-        self.state.animate(now, press_sequence);
+    pub fn press(&self, now: u64) {
+        self.state.press(now);
     }
 }
 
 pub fn update(scene: &mut Scene, view: &View) -> Result<(), String> {
     scene.state.present(view);
-    scene.loading = loading(view);
 
     Ok(())
 }
@@ -94,16 +87,14 @@ pub fn cycle_theme<B: Surface, F: RendererFactory<B>>(
     app: &mut App<B, F>,
     scene: &mut Scene,
 ) -> Result<Option<crate::theme::Palette>, String> {
-    use crate::theme::Palette;
-    if !Palette::can_switch(&scene.state.snapshot()) {
+    if !scene.state.can_switch_theme() {
         return Ok(None);
     }
-    let palette = Palette::parse(scene.colors.id().as_str())
-        .unwrap_or_default()
-        .next();
+    let settings = scene.state.settings();
+    settings.cycle_theme();
+    let palette = settings.palette();
     app.set_theme(palette.theme())
         .map_err(|error| format!("Theme: {error:?}"))?;
-    scene.colors = app.theme().clone();
     Ok(Some(palette))
 }
 
@@ -116,8 +107,17 @@ pub fn build<B: Surface, F: RendererFactory<B>>(
         None => app.spawn_root().bg_color(BACKGROUND).id(),
     };
     let state = app.compose(root, state::display_state());
+    let preferences = state.settings();
+    preferences.restore(
+        crate::theme::Palette::parse(app.theme().id().as_str()).unwrap_or_default(),
+        preferences.sound(),
+    );
     state.present(view);
-    state.animate(0, 0);
+    let at = app
+        .world
+        .resource::<mirui::ecs::MonoClock>()
+        .map_or(0, |clock| clock.now_ns() / 1_000_000);
+    state.animate(at, 0);
     state.feedback(
         app.theme().resolve(ACCENT_DIM),
         [if loading(view) {
@@ -130,11 +130,7 @@ pub fn build<B: Surface, F: RendererFactory<B>>(
         let metrics = Metrics::for_height(app.backend.viewport().logical_size().1);
         app.compose(root, composition::shell(state.clone(), metrics));
     }
-    Ok(Scene {
-        loading: loading(view),
-        state,
-        colors: app.theme().clone(),
-    })
+    Ok(Scene { state })
 }
 
 #[compose]
@@ -155,3 +151,51 @@ pub fn draw<B: Surface, F: RendererFactory<B>>(
 #[cfg(test)]
 #[path = "render_tests.rs"]
 mod tests;
+
+// Deterministic capture uses the same scheduler and clock contract as the device.
+thread_local! { static CAPTURE_TIME_NS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) }; }
+
+fn capture_time_ns() -> u64 {
+    CAPTURE_TIME_NS.with(std::cell::Cell::get)
+}
+
+pub fn paint_at<B: Surface, F: RendererFactory<B>>(
+    app: &mut App<B, F>,
+    now: u64,
+) -> Result<(), String> {
+    CAPTURE_TIME_NS.with(|time| time.set(now * 1_000_000));
+    if let Some(clock) = app.world.resource_mut::<mirui::ecs::MonoClock>() {
+        clock.clock = capture_time_ns;
+    } else {
+        app.add_resource(mirui::ecs::MonoClock {
+            clock: capture_time_ns,
+            last_ns: 0,
+        });
+    }
+    tick(app)
+}
+
+pub fn tick<B: Surface, F: RendererFactory<B>>(app: &mut App<B, F>) -> Result<(), String> {
+    if app.tick() {
+        Err("The display requested shutdown".into())
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(any(target_os = "linux", test))]
+pub(crate) fn settings<B: Surface, F: RendererFactory<B>>(
+    app: &mut App<B, F>,
+) -> crate::settings::SettingsHandle {
+    let root = app.root.unwrap_or_else(|| app.spawn_root().id());
+    app.compose(root, state::display_state()).settings()
+}
+
+#[cfg(target_os = "linux")]
+pub fn now<B: Surface, F: RendererFactory<B>>(app: &App<B, F>) -> u64 {
+    app.world
+        .resource::<mirui::ecs::MonoClock>()
+        .expect("Live UI clock is installed")
+        .now_ns()
+        / 1_000_000
+}

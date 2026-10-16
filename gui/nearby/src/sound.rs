@@ -7,11 +7,9 @@ use mirui::app::{App, RendererFactory};
 use mirui::audio::{AudioHandle, AudioOutputState, CueId};
 use mirui::prelude::model;
 use mirui::surface::Surface;
-use serde::Deserialize;
 use std::collections::BTreeSet;
 use std::path::Path;
 
-const SETTINGS: &str = "/opt/arkos-nearby/ui-sound.json";
 const NAVIGATION_INTERVAL_MS: u64 = 65;
 const ACTION_INTERVAL_MS: u64 = 120;
 const INPUT_WINDOW_MS: u64 = 750;
@@ -37,47 +35,16 @@ impl Cue {
     }
 }
 
-#[derive(Deserialize)]
-#[serde(default, deny_unknown_fields)]
-struct Preferences {
-    enabled: bool,
-    gain: u8,
-}
+use crate::settings::{SOUND_FILE, SoundPreferences};
 
-impl Default for Preferences {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            gain: 96,
-        }
-    }
-}
-
-impl Preferences {
-    fn load(path: &Path) -> Self {
-        match std::fs::read(path) {
-            Ok(data) => serde_json::from_slice(&data).unwrap_or_else(|error| {
-                eprintln!("Sound preferences: {error}");
-                Self::default()
-            }),
-            Err(error) => {
-                if error.kind() != std::io::ErrorKind::NotFound {
-                    eprintln!("Sound preferences: {error}");
-                }
-                Self::default()
-            }
-        }
-    }
-}
-
-pub fn install<B: Surface, F: RendererFactory<B>>(app: &mut App<B, F>) {
+pub fn install<B: Surface, F: RendererFactory<B>>(app: &mut App<B, F>) -> SoundPreferences {
     use mirui::app::plugins::AudioPlugin;
     #[cfg(feature = "sound")]
     let sink = mirui::audio::SdlAudioSink::new();
     #[cfg(not(feature = "sound"))]
     let sink = mirui::audio::SilentAudioSink::default();
     app.add_plugin(AudioPlugin::new(sink, &bank::BANK));
-    let preferences = Preferences::load(Path::new(SETTINGS));
+    let preferences = SoundPreferences::load(Path::new(SOUND_FILE));
     if let Some(audio) = app.audio() {
         audio.set_master_gain(preferences.gain);
         audio.set_muted(!preferences.enabled);
@@ -86,9 +53,10 @@ pub fn install<B: Surface, F: RendererFactory<B>>(app: &mut App<B, F>) {
             serde_json::json!({"ui_audio":format!("{:?}", audio.state()),"sdl_output":cfg!(feature="sound")})
         );
     }
+    preferences
 }
 
-fn play(audio: &AudioHandle, cue: Option<Cue>) {
+pub(crate) fn play(audio: &AudioHandle, cue: Option<Cue>) {
     if let Some(cue) = cue {
         if !audio
             .state()
@@ -127,6 +95,7 @@ impl SoundState {
             .and_then(|view| self.feedback.input(action, view, at));
     }
 
+    #[cfg(test)]
     pub fn theme_changed(&mut self) {
         self.pending = Some(Cue::Confirm);
     }
@@ -210,7 +179,7 @@ impl Feedback {
         }
         let cue = match action {
             Action::Back if view.page != Page::Leaving => Some(Cue::Back),
-            Action::Theme if crate::theme::Palette::can_switch(view) => Some(Cue::Confirm),
+            Action::Theme if view.can_switch_theme() => Some(Cue::Confirm),
             Action::Refresh if view.page == Page::Rooms && !view.busy && !view.refreshing => {
                 Some(Cue::Refresh)
             }

@@ -3,6 +3,7 @@ mod model;
 #[cfg(target_os = "linux")]
 mod platform;
 mod render;
+mod settings;
 #[cfg(any(target_os = "linux", test))]
 mod sound;
 mod theme;
@@ -111,9 +112,8 @@ fn snapshot(
     }
     let scene = render::draw(&mut app, &view)?;
     if let Some(now) = time_ms {
-        let mut motion = feedback::Feedback::default();
-        motion.press(0);
-        motion.paint(&mut app, &scene, now)?;
+        scene.press(0);
+        render::paint_at(&mut app, now)?;
     }
     let file = BufWriter::new(File::create(output).map_err(|e| e.to_string())?);
     let mut encoder = png::Encoder::new(file, u32::from(size[0]), u32::from(size[1]));
@@ -158,7 +158,6 @@ fn benchmark() -> Result<(), String> {
         let start = Instant::now();
         let mut scene = render::draw(&mut app, &view)?;
         let full_ms = start.elapsed().as_secs_f64() * 1000.0;
-        let mut motion = feedback::Feedback::default();
         let mut timing = Timings::default();
         let mut pixels = Timings::default();
         for frame in 0..120 {
@@ -178,7 +177,7 @@ fn benchmark() -> Result<(), String> {
                 .into();
                 render::update(&mut scene, &view)?;
             }
-            motion.paint(&mut app, &scene, now)?;
+            render::paint_at(&mut app, now)?;
             let elapsed = start.elapsed().as_secs_f64() * 1000.0;
             timing.add(elapsed);
             pixels.add(f64::from(*damage.borrow()));
@@ -284,16 +283,25 @@ fn live() -> Result<(), String> {
         .map_err(|error| error.to_string())?;
     render::install(&mut app)?;
     app.add_plugin(mirui::app::plugins::StdInstantClockPlugin);
-    sound::install(&mut app);
+    let preferences = sound::install(&mut app);
     let sound = sound::register(&mut app)?;
-    app.set_theme(theme::Palette::load(Path::new(theme::SETTINGS)).theme())
+    let settings = render::settings(&mut app);
+    let palette = theme::Palette::load(Path::new(theme::SETTINGS));
+    settings.restore(palette, preferences);
+    app.set_theme(palette.theme())
         .map_err(|error| format!("Theme: {error:?}"))?;
+    let confirmation = app.audio().ok_or("Audio plugin is unavailable")?;
+    settings::connect(
+        &settings,
+        app.audio().ok_or("Audio plugin is unavailable")?,
+        Path::new(theme::SETTINGS).into(),
+        Path::new(settings::SOUND_FILE).into(),
+        move || sound::play(&confirmation, Some(sound::Cue::Confirm)),
+    )?;
     platform::record_init("after_fonts", serde_json::json!({}))
         .map_err(|error| error.to_string())?;
     let mut view: Option<model::View> = None;
     let mut scene = None;
-    let mut motion = feedback::Feedback::default();
-    let epoch = Instant::now();
     let mut next_frame = Instant::now();
     let mut first_frame_sent = false;
     let mut metrics = FrameMetrics::default();
@@ -309,17 +317,15 @@ fn live() -> Result<(), String> {
         }
         if let Some(latest) = latest {
             if view.as_ref() != Some(&latest) {
-                sound.present(&latest, epoch.elapsed().as_millis() as u64);
+                sound.present(&latest, render::now(&app));
                 let frame_start = Instant::now();
                 let full = scene.is_none();
                 if let Some(current_scene) = scene.as_mut() {
                     render::update(current_scene, &latest)?;
-                    motion.paint(&mut app, current_scene, epoch.elapsed().as_millis() as u64)?;
+                    render::tick(&mut app)?;
                 } else {
                     let next_scene = render::build(&mut app, &latest)?;
-                    motion.apply(&next_scene, epoch.elapsed().as_millis() as u64);
-                    app.render()
-                        .map_err(|error| format!("Menu frame: {error:?}"))?;
+                    render::tick(&mut app)?;
                     scene = Some(next_scene);
                 }
                 metrics.record(frame_start, full);
@@ -341,31 +347,23 @@ fn live() -> Result<(), String> {
                 }
             }
         }
-        if let Some(scene) = scene.as_ref() {
-            let now = epoch.elapsed().as_millis() as u64;
-            if !rendered && Instant::now() >= next_frame {
-                let frame_start = Instant::now();
-                next_frame = frame_start + FRAME_INTERVAL;
-                motion.paint(&mut app, scene, now)?;
-                metrics.record(frame_start, false);
-                if let Some(error) = flush_error.borrow_mut().take() {
-                    return Err(format!("Framebuffer pwrite: {error}"));
-                }
+        if scene.is_some() && !rendered && Instant::now() >= next_frame {
+            let frame_start = Instant::now();
+            next_frame = frame_start + FRAME_INTERVAL;
+            render::tick(&mut app)?;
+            metrics.record(frame_start, false);
+            if let Some(error) = flush_error.borrow_mut().take() {
+                return Err(format!("Framebuffer pwrite: {error}"));
             }
         }
         for action in terminal.poll().map_err(|e| e.to_string())? {
             if matches!(action, model::Action::Theme) {
                 if let Some(scene) = scene.as_mut() {
-                    if let Some(palette) = render::cycle_theme(&mut app, scene)? {
-                        sound.theme_changed();
-                        if let Err(error) = palette.save(Path::new(theme::SETTINGS)) {
-                            eprintln!("Theme preference: {error}");
-                        }
-                    }
+                    render::cycle_theme(&mut app, scene)?;
                 }
                 continue;
             }
-            sound.input(action, epoch.elapsed().as_millis() as u64);
+            sound.input(action, render::now(&app));
             if let Some(scene) = scene.as_ref() {
                 match action {
                     model::Action::Back => scene.navigation_intent(true),
@@ -373,8 +371,10 @@ fn live() -> Result<(), String> {
                     _ => {}
                 }
             }
-            if matches!(action, model::Action::Confirm | model::Action::Refresh) {
-                motion.press(epoch.elapsed().as_millis() as u64);
+            if matches!(action, model::Action::Confirm | model::Action::Refresh)
+                && let Some(scene) = scene.as_ref()
+            {
+                scene.press(render::now(&app));
             }
             let mut output = io::stdout().lock();
             serde_json::to_writer(&mut output, &action).map_err(|e| e.to_string())?;

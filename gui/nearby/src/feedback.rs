@@ -1,14 +1,12 @@
-use crate::render::{Scene, motion::timing};
+use crate::render::motion::timing;
 use mirui::anim::{PlayMode, Tween, ease};
-use mirui::app::RendererFactory;
 use mirui::prelude::*;
-use mirui::surface::Surface;
 
 pub struct Feedback {
     press: Tween,
     activity: [Tween; 3],
     last_ms: u64,
-    press_sequence: u64,
+    pub press_sequence: u64,
 }
 
 impl Default for Feedback {
@@ -39,13 +37,16 @@ impl Feedback {
         self.press = Tween::ease_to(Fixed::ONE, Fixed::ZERO, timing::PRESS_FADE_MS);
     }
 
-    pub fn apply(&mut self, scene: &Scene, now: u64) {
-        scene.animate(now, self.press_sequence);
+    pub fn sample(
+        &mut self,
+        now: u64,
+        loading: bool,
+        theme: &mirui::ui::theme::Theme,
+    ) -> (Color, [Color; 3]) {
         let delta = now.saturating_sub(self.last_ms).min(u64::from(u16::MAX)) as u16;
         self.last_ms = now;
         self.press.tick(delta);
         let press = self.press.value().to_f32();
-        let theme = &scene.colors;
         let stamp = theme.resolve(if press > 0.0 {
             ColorToken::Primary
         } else {
@@ -54,7 +55,7 @@ impl Feedback {
         let accent = theme.resolve(ColorToken::Primary);
         let activity = std::array::from_fn(|index| {
             self.activity[index].tick(delta);
-            if scene.loading {
+            if loading {
                 Color::rgba(
                     accent.r,
                     accent.g,
@@ -65,19 +66,6 @@ impl Feedback {
                 theme.resolve(ColorToken::Surface)
             }
         });
-        scene.feedback(stamp, activity);
-    }
-
-    pub fn paint<B: Surface, F: RendererFactory<B>>(
-        &mut self,
-        app: &mut App<B, F>,
-        scene: &Scene,
-        now: u64,
-    ) -> Result<(), String> {
-        self.apply(scene, now);
-        if app.tick() {
-            return Err("The display requested shutdown".into());
-        }
-        Ok(())
+        (stamp, activity)
     }
 }

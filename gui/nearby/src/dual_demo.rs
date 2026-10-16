@@ -6,6 +6,8 @@ mod model;
 #[allow(dead_code)]
 mod render;
 #[allow(dead_code)]
+mod settings;
+#[allow(dead_code)]
 mod theme;
 
 #[path = "../examples/dual_demo/scene.rs"]
@@ -15,7 +17,6 @@ mod story;
 #[path = "../examples/dual_demo/capture.rs"]
 mod vector_capture;
 
-use feedback::Feedback;
 use mirui::core::cache::MaxSize;
 use mirui::core::resource::ResourceManager;
 use mirui::prelude::*;
@@ -51,7 +52,6 @@ fn app(width: u16, height: u16) -> Result<SoftwareApp, String> {
 struct Handheld {
     app: SoftwareApp,
     scene: render::Scene,
-    feedback: Feedback,
     view: model::View,
     palette: theme::Palette,
     press: u8,
@@ -64,7 +64,6 @@ impl Handheld {
         Ok(Self {
             app,
             scene,
-            feedback: Feedback::default(),
             view,
             palette: theme::Palette::Forest,
             press: 0,
@@ -81,7 +80,6 @@ impl Handheld {
             self.app
                 .set_theme(shot.palette.theme())
                 .map_err(|e| format!("{e:?}"))?;
-            self.scene.colors = shot.palette.theme();
             self.palette = shot.palette;
         }
         if self.view != shot.view {
@@ -89,10 +87,10 @@ impl Handheld {
             self.view = shot.view.clone();
         }
         if self.press != shot.press {
-            self.feedback.press(now);
+            self.scene.press(now);
             self.press = shot.press;
         }
-        self.feedback.paint(&mut self.app, &self.scene, now)?;
+        render::paint_at(&mut self.app, now)?;
         if vector {
             vector_capture::disable_raster_caches(&mut self.app);
         }

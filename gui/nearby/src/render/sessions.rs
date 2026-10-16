@@ -7,7 +7,6 @@ use super::{
     style::*,
     widgets::{action_label, guidance, label, live_label, paragraph, shadow},
 };
-use crate::model::View;
 use TextField::{Headline, Peer, RoomName};
 use mirui::prelude::*;
 use mirui::ui::OffscreenRender;
@@ -15,7 +14,7 @@ use mirui::ui::widgets::Text;
 use mirui::ui::widgets::TextAlign::{Center, End, Start};
 
 #[compose]
-pub(super) fn host(_view: &View, state: model!(DisplayState), metrics: Metrics) -> Entity {
+pub(super) fn host(state: model!(DisplayState), metrics: Metrics) -> Entity {
     ui! {
         Column (
             grow: 1.0,
@@ -60,7 +59,7 @@ pub(super) fn host(_view: &View, state: model!(DisplayState), metrics: Metrics) 
                     justify: JustifyContent::Center
                 ) [
                     Section::FocusHost,
-                    FocusTarget::Fixed(0),
+                    FocusTarget::fixed(0),
                 ] {
                     action_label (state, metrics.title)
                 }
@@ -71,7 +70,7 @@ pub(super) fn host(_view: &View, state: model!(DisplayState), metrics: Metrics) 
 }
 
 #[compose]
-pub(super) fn network_panel(_view: &View, state: model!(DisplayState), metrics: Metrics) -> Entity {
+pub(super) fn network_panel(state: model!(DisplayState), metrics: Metrics) -> Entity {
     ui! {
         Column (grow: 1.0, min_height: 0, row_gap: metrics.gap) {
             Column (grow: 1.0, min_height: 0) {
@@ -125,7 +124,7 @@ pub(super) fn network_panel(_view: &View, state: model!(DisplayState), metrics: 
                     justify: JustifyContent::Center
                 ) [
                     Section::FocusHost,
-                    FocusTarget::Fixed(0),
+                    FocusTarget::fixed(0),
                 ] {
                     action_label (state, metrics.title)
                 }
@@ -182,7 +181,7 @@ fn network_devices(rows: &[crate::model::NetworkPeer], metrics: Metrics) -> Enti
 }
 
 #[compose]
-pub(super) fn joined(_view: &View, state: model!(DisplayState), metrics: Metrics) -> Entity {
+pub(super) fn joined(state: model!(DisplayState), metrics: Metrics) -> Entity {
     ui! {
         Column (grow: 1.0, min_height: 0) {
             Column (
