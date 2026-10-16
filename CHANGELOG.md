@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-10-16
+
+- Ensure the audio probe plays its confirmation cue.
+
 ## [0.6.0] - 2026-10-16
 
 - Add 8-bit menu sounds for navigation, room discovery, readiness and connection results.

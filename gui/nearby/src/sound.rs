@@ -1,8 +1,11 @@
 mod bank;
+#[cfg(test)]
+mod model_tests;
 
 use crate::model::{Action, Page, Phase, View};
 use mirui::app::{App, RendererFactory};
-use mirui::audio::{AudioOutputState, CueId};
+use mirui::audio::{AudioHandle, AudioOutputState, CueId};
+use mirui::prelude::model;
 use mirui::surface::Surface;
 use serde::Deserialize;
 use std::collections::BTreeSet;
@@ -85,8 +88,8 @@ pub fn install<B: Surface, F: RendererFactory<B>>(app: &mut App<B, F>) {
     }
 }
 
-pub fn play<B: Surface, F: RendererFactory<B>>(app: &App<B, F>, cue: Option<Cue>) {
-    if let (Some(audio), Some(cue)) = (app.audio(), cue) {
+fn play(audio: &AudioHandle, cue: Option<Cue>) {
+    if let Some(cue) = cue {
         if !audio
             .state()
             .is_some_and(|state| state.output == AudioOutputState::Ready && !state.muted)
@@ -99,17 +102,64 @@ pub fn play<B: Surface, F: RendererFactory<B>>(app: &App<B, F>, cue: Option<Cue>
     }
 }
 
+#[model]
+#[derive(Default)]
+pub struct SoundState {
+    feedback: Feedback,
+    previous: Option<View>,
+    pending: Option<Cue>,
+}
+
+#[model]
+impl SoundState {
+    pub fn present(&mut self, view: &View, at: u64) {
+        if self.previous.as_ref() == Some(view) {
+            return;
+        }
+        self.pending = self.feedback.observe(self.previous.as_ref(), view, at);
+        self.previous = Some(view.clone());
+    }
+
+    pub fn input(&mut self, action: Action, at: u64) {
+        self.pending = self
+            .previous
+            .as_ref()
+            .and_then(|view| self.feedback.input(action, view, at));
+    }
+
+    pub fn theme_changed(&mut self) {
+        self.pending = Some(Cue::Confirm);
+    }
+
+    #[effects]
+    fn take_sound(&mut self) -> Option<Cue> {
+        self.pending.take()
+    }
+}
+
+pub fn register<B: Surface, F: RendererFactory<B>>(
+    app: &mut App<B, F>,
+) -> Result<SoundStateHandle, String> {
+    let audio = app.audio().ok_or("Audio plugin is unavailable")?;
+    let state = app.add_model(SoundState::default()).finish();
+    state
+        .on_effect(move |cue: &Cue| play(&audio, Some(*cue)))
+        .map_err(|error| format!("Sound effect registration: {error:?}"))?;
+    Ok(state)
+}
+
 #[cfg(all(target_os = "linux", feature = "sound"))]
 pub fn probe() -> Result<(), String> {
     let mut app = App::headless(1, 1);
     app.with_default_widgets().with_default_systems();
+    app.spawn_root().id();
     install(&mut app);
     let audio = app.audio().ok_or("Audio plugin is unavailable")?;
     let state = audio.state().ok_or("Audio state is unavailable")?;
     if state.output != AudioOutputState::Ready {
         return Err(format!("Audio output: {:?}", state.output));
     }
-    play(&app, Some(Cue::Confirm));
+    play(&audio, Some(Cue::Confirm));
     app.render()
         .map_err(|error| format!("Audio dispatch: {error:?}"))?;
     std::thread::sleep(std::time::Duration::from_millis(200));
@@ -121,7 +171,7 @@ pub fn probe() -> Result<(), String> {
 }
 
 #[derive(Default)]
-pub struct Feedback {
+struct Feedback {
     navigation_at: Option<u64>,
     last_focus: Option<u64>,
     last_action: Option<u64>,
@@ -261,7 +311,7 @@ mod tests {
         install(&mut app);
         let audio = app.audio().unwrap();
         assert_eq!(audio.state().unwrap().master_gain, 96);
-        play(&app, Some(Cue::Confirm));
+        play(&audio, Some(Cue::Confirm));
         drop(app);
         assert!(audio.state().is_none());
     }

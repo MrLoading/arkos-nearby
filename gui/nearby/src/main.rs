@@ -285,7 +285,7 @@ fn live() -> Result<(), String> {
     render::install(&mut app)?;
     app.add_plugin(mirui::app::plugins::StdInstantClockPlugin);
     sound::install(&mut app);
-    let mut sound = sound::Feedback::default();
+    let sound = sound::register(&mut app)?;
     app.set_theme(theme::Palette::load(Path::new(theme::SETTINGS)).theme())
         .map_err(|error| format!("Theme: {error:?}"))?;
     platform::record_init("after_fonts", serde_json::json!({}))
@@ -309,8 +309,7 @@ fn live() -> Result<(), String> {
         }
         if let Some(latest) = latest {
             if view.as_ref() != Some(&latest) {
-                let cue = sound.observe(view.as_ref(), &latest, epoch.elapsed().as_millis() as u64);
-                sound::play(&app, cue);
+                sound.present(&latest, epoch.elapsed().as_millis() as u64);
                 let frame_start = Instant::now();
                 let full = scene.is_none();
                 if let Some(current_scene) = scene.as_mut() {
@@ -358,7 +357,7 @@ fn live() -> Result<(), String> {
             if matches!(action, model::Action::Theme) {
                 if let Some(scene) = scene.as_mut() {
                     if let Some(palette) = render::cycle_theme(&mut app, scene)? {
-                        sound::play(&app, Some(sound::Cue::Confirm));
+                        sound.theme_changed();
                         if let Err(error) = palette.save(Path::new(theme::SETTINGS)) {
                             eprintln!("Theme preference: {error}");
                         }
@@ -366,10 +365,7 @@ fn live() -> Result<(), String> {
                 }
                 continue;
             }
-            if let Some(view) = view.as_ref() {
-                let cue = sound.input(action, view, epoch.elapsed().as_millis() as u64);
-                sound::play(&app, cue);
-            }
+            sound.input(action, epoch.elapsed().as_millis() as u64);
             if let Some(scene) = scene.as_ref() {
                 match action {
                     model::Action::Back => scene.navigation_intent(true),
