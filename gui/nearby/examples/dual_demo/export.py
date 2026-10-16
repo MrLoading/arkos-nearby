@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Render the mirui dual-handheld storyboard and encode its README WebP."""
+"""Render the mirui dual-handheld storyboard and encode WebP or MP4."""
 
 import argparse
 import json
@@ -20,12 +20,19 @@ def main():
     )
     parser.add_argument("--toolchain", default="1.92")
     parser.add_argument("--quality", type=int, default=75)
-    parser.add_argument("--width", type=int, default=840)
+    parser.add_argument("--width", type=int)
+    parser.add_argument("--crf", type=int, default=22)
     parser.add_argument("--lossless", action="store_true")
     parser.add_argument("--reuse-frames", action="store_true")
     args = parser.parse_args()
-    if args.output.suffix.lower() != ".webp":
-        parser.error("--output must use the .webp extension")
+    video = args.output.suffix.lower() == ".mp4"
+    if args.output.suffix.lower() not in (".webp", ".mp4"):
+        parser.error("--output must use the .webp or .mp4 extension")
+    if not 0 <= args.crf <= 51:
+        parser.error("--crf must be between 0 and 51")
+    args.width = args.width or (1120 if video else 840)
+    if args.width <= 0 or (video and args.width % 2):
+        parser.error("--width must be positive and even for MP4")
     if not args.reuse_frames:
         cargo, env = gui.toolchain(args.toolchain)
         env["CARGO_INCREMENTAL"] = "0"
@@ -48,6 +55,42 @@ def main():
         binary = Path(env["CARGO_TARGET_DIR"]) / "release/examples/dual_demo"
         subprocess.run([str(binary), str(args.frames.resolve())], check=True)
     animation = json.loads((args.frames / "animation.json").read_text())
+    if video:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        encoded = args.output.with_suffix(".part.mp4").resolve()
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-y",
+                "-framerate",
+                str(animation["fps"]),
+                "-i",
+                str(args.frames / "%04d.png"),
+                "-vf",
+                f"scale={args.width}:-2:flags=lanczos",
+                "-frames:v",
+                str(animation["frames"]),
+                "-c:v",
+                "libx264",
+                "-preset",
+                "slow",
+                "-crf",
+                str(args.crf),
+                "-pix_fmt",
+                "yuv420p",
+                "-movflags",
+                "+faststart",
+                "-an",
+                str(encoded),
+            ],
+            check=True,
+        )
+        encoded.replace(args.output.resolve())
+        print(args.output.resolve())
+        return
     scaled = args.frames / "scaled"
     scaled.mkdir(exist_ok=True)
     height = round(animation["height"] * args.width / animation["width"])

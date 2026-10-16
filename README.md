@@ -10,7 +10,7 @@
 
 [下载安装](https://github.com/W-Mai/arkos-nearby/releases/tag/v0.5.1) · [使用说明](docs/installation.md) · [游戏兼容性](docs/compatibility.md) · [源码构建](docs/building.md)
 
-<img src="docs/assets/nearby-dual-demo.webp" alt="双机联机界面演示：创建房间、搜索加入、确认就绪与主题切换" width="840" />
+<img src="docs/assets/nearby-dual-demo.svg" alt="双机联机界面演示：创建房间、搜索加入、确认就绪与主题切换" width="840" />
 
 </div>
 

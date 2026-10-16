@@ -12,6 +12,8 @@ mod theme;
 mod scene;
 #[path = "../examples/dual_demo/story.rs"]
 mod story;
+#[path = "../examples/dual_demo/capture.rs"]
+mod vector_capture;
 
 use feedback::Feedback;
 use mirui::core::cache::MaxSize;
@@ -69,7 +71,12 @@ impl Handheld {
         })
     }
 
-    fn frame(&mut self, shot: &story::Screen, now: u64) -> Result<Texture<'static>, String> {
+    fn frame(
+        &mut self,
+        shot: &story::Screen,
+        now: u64,
+        vector: bool,
+    ) -> Result<Texture<'static>, String> {
         if self.palette != shot.palette {
             self.app
                 .set_theme(shot.palette.theme())
@@ -86,6 +93,9 @@ impl Handheld {
             self.press = shot.press;
         }
         self.feedback.paint(&mut self.app, &self.scene, now)?;
+        if vector {
+            vector_capture::disable_raster_caches(&mut self.app);
+        }
         capture(&mut self.app)
     }
 }
@@ -112,10 +122,12 @@ fn write_png(path: &Path, texture: &Texture<'_>) -> Result<(), Box<dyn std::erro
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let args: Vec<String> = std::env::args().skip(1).collect();
+    let mut args: Vec<String> = std::env::args().skip(1).collect();
+    let vector = args.iter().any(|arg| arg == "--scene");
+    args.retain(|arg| arg != "--scene");
     let output = args
         .first()
-        .ok_or("Usage: dual_demo OUTPUT_DIRECTORY [FRAME_LIMIT] [START_FRAME]")?;
+        .ok_or("Usage: dual_demo OUTPUT_DIRECTORY [FRAME_LIMIT] [START_FRAME] [--scene]")?;
     let limit = args
         .get(1)
         .map(|s| s.parse::<u32>())
@@ -144,12 +156,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .finish();
     let root = stage.spawn_root().id();
     stage.compose(root, scene::stage(state.clone()));
+    let mut exporter = vector_capture::Export::default();
+    let mut vector_frames = Vec::new();
     for index in 0..(start.saturating_add(limit)).min(story::FRAMES) {
         let now = u64::from(index) * 1000 / u64::from(story::FPS);
         TIME.with(|clock| clock.set(now * 1_000_000));
         let shot = story::at(now as f32 / 1000.0);
         for (side, screen) in screens.iter_mut().enumerate() {
-            let texture = screen.frame(&shot.screens[side], now)?;
+            let texture = screen.frame(&shot.screens[side], now, vector)?;
             stage
                 .world
                 .resource::<ResourceManager<Texture<'static>>>()
@@ -161,6 +175,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let texture = capture(&mut stage)?;
         if index >= start {
             write_png(&Path::new(output).join(format!("{index:04}.png")), &texture)?;
+            if vector {
+                vector_frames.push(serde_json::json!({
+                    "host": exporter.capture(&screens[0].app, false)?,
+                    "guest": exporter.capture(&screens[1].app, false)?,
+                    "stage": exporter.capture(&stage, true)?,
+                }));
+            }
         }
         if index % story::FPS == 0 {
             println!("Frame {index}/{}", story::FRAMES);
@@ -176,5 +197,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "start": start,
         }))?,
     )?;
+    if vector {
+        serde_json::to_writer(
+            BufWriter::new(File::create(Path::new(output).join("scenes.json"))?),
+            &serde_json::json!({
+                "width":scene::WIDTH, "height":scene::HEIGHT, "fps":story::FPS,
+                "frames":vector_frames, "definitions":exporter.definitions,
+            }),
+        )?;
+    }
     Ok(())
 }

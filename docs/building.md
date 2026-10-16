@@ -66,6 +66,22 @@ python3 gui/nearby/examples/dual_demo/export.py --output /tmp/nearby-dual-demo.w
 
 Cargo 产物沿用 GUI 的外部缓存目录，1120×780 PNG 帧默认保存到 `/tmp/arkos-nearby-demo-frames`。`--frames` 指定帧目录，`--width` 设置成品宽度，`--quality` 设置编码质量，默认 75；`--lossless` 使用无损编码，`--reuse-frames` 复用已有帧进行编码。`gui/nearby/examples/dual_demo/story.rs` 定义分镜与镜头，`scene.rs` 定义宣传画面，`gui/nearby/src/dual_demo.rs` 负责逐帧渲染和导出。
 
+生成适合分享的 H.264 MP4，默认保留 1120×780 分辨率、25 fps 和完整 20 秒内容：
+
+```sh
+python3 gui/nearby/examples/dual_demo/export.py --output /tmp/nearby-dual-demo.mp4 --reuse-frames
+```
+
+`--crf` 控制视频压缩强度，默认 22；较小的数值保留更多细节。MP4 使用 YUV 4:2:0 和 faststart，便于浏览器及移动端播放。
+
+导出自包含的动画 SVG：
+
+```sh
+python3 gui/nearby/examples/dual_demo/svg.py --output /tmp/nearby-dual-demo.svg
+```
+
+导出器通过 mirui SceneRenderer 捕获两个菜单与宣传场景，保存绘制顺序和裁剪，将像素字形转为共享路径，并生成 CSS 动画时间轴。相邻且互不重叠的静态矩形合并为路径，裁剪范围完全覆盖的矩形省去裁剪层，暂未出现的图形按时间轴退出绘制。中间场景和 PNG 帧默认写入 `/tmp/arkos-nearby-svg`；`--frames` 指定目录，`--reuse-scenes` 复用其中的 `scenes.json`。SVG 的播放开销取决于浏览器对矢量节点和动画的处理能力。
+
 ## 核心查询器
 
 发布资产带有 32/64 位核心查询器。重新构建需要 `native/core_inspect/runtime-pins.json` 中匹配的 ABI 库和 clang，执行 `python3 scripts/build_core_inspect.py build --libraries /path/to/pinned-libraries --output build/assets`。查询器用于读取核心元数据。

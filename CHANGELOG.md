@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+- Reduce animated SVG size and browser rendering overhead.
+
+- Add animated SVG and H.264 MP4 export commands for the dual-handheld demo.
+
 ## [0.5.1] - 2026-10-16
 
 - Add side markers and bottom shadows to room and game rows, with sparse lists aligned at the top.
