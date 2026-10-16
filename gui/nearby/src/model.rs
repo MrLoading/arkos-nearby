@@ -81,6 +81,12 @@ pub struct View {
     pub entries: Vec<GameRow>,
 }
 
+impl View {
+    pub fn host_action_enabled(&self) -> bool {
+        (self.ready || self.connected || self.phase == Phase::ApprovalPending) && !self.busy
+    }
+}
+
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct NetworkPeer {
@@ -109,9 +115,9 @@ mod tests {
     }
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 pub enum Action {
     Up,
     Down,

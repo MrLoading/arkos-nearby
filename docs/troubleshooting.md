@@ -24,6 +24,10 @@
 
 先退出游戏和房间，再重新打开 Options 入口。检查 `/opt/arkos-nearby/logs/` 中的启动记录。报告时附上版本、`doctor` 结果、打开方式、游戏名称和所用核心。
 
+## 菜单音效
+
+菜单使用 8-bit 音效提示选择、确认、房间就绪和连接结果，音量跟随掌机系统音量。可在 `/opt/arkos-nearby/ui-sound.json` 设置 `{"enabled":true,"gain":96}`；`gain` 范围为 0–255，`enabled` 设为 `false` 可静音。修改后重新打开联机菜单生效。启动日志中的 `ui_audio` 记录音频输出状态。
+
 ## 报告问题
 
 在 [GitHub Issues](https://github.com/W-Mai/arkos-nearby/issues) 中提供可重复步骤与两端状态。日志发送前删除配对代码、无线密码、私钥和个人游戏路径。画面流畅度问题应附同设备、同核心、同场景的单机与联机对照。

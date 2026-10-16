@@ -1,7 +1,7 @@
 use crate::model::{Page, Phase, View};
 
 pub(super) fn host_action_enabled(view: &View) -> bool {
-    (view.ready || view.connected || view.phase == Phase::ApprovalPending) && !view.busy
+    view.host_action_enabled()
 }
 
 pub(super) fn page_heading(view: &View) -> &str {

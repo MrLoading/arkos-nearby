@@ -2,8 +2,10 @@
 
 ## [Unreleased]
 
-- Reduce animated SVG size and browser rendering overhead.
+## [0.6.0] - 2026-10-16
 
+- Add 8-bit menu sounds for navigation, room discovery, readiness and connection results.
+- Reduce animated SVG size and browser rendering overhead.
 - Add animated SVG and H.264 MP4 export commands for the dual-handheld demo.
 
 ## [0.5.1] - 2026-10-16
