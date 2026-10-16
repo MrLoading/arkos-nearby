@@ -52,7 +52,7 @@ pub(super) fn choice(view: PageKey, state: model!(DisplayState), metrics: Metric
                             row_gap: metrics.gap,
                             bg_color: ${ state.motion().card_color(card.0) }
                         ) [
-                            FocusTarget::fixed(card.0),
+                            FocusTarget::fixed(card.0).scoped(view.page),
                         ] {
                             View (
                                 grow: 1.0,
@@ -102,6 +102,19 @@ pub(super) fn choice(view: PageKey, state: model!(DisplayState), metrics: Metric
                         }
                         shadow (metrics)
                     }
+                }
+            }
+            if ${ view.page == Page::Mode && state.current_game() } {
+                Row (
+                    height: 36,
+                    shrink: 0.0,
+                    bg_color: PANEL,
+                    padding: Padding::all(6),
+                    transform: ${ state.motion().card_transform(2) }
+                ) [
+                    FocusTarget::fixed(2),
+                ] {
+                    label ("+ 创建当前游戏的房间", metrics.body, FOREGROUND, Center)
                 }
             }
             art (state, Walker, metrics.walker_height())

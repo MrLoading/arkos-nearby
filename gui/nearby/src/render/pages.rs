@@ -4,7 +4,7 @@ use super::{
     cache::GpuLayerCache,
     choices::choice,
     chrome::{footer, header},
-    lists::{games, rooms},
+    lists::{game_rows, games, lobby, rooms},
     pixel::Scenery,
     sessions::{host, joined, leaving, network_panel, unavailable},
     state::DisplayState,
@@ -47,22 +47,22 @@ pub(super) fn page(view: PageKey, state: model!(DisplayState), metrics: Metrics)
                 Column (
                     grow: 1.0,
                     min_height: 0,
-                    row_gap: metrics.gap
+                    row_gap: if view.page == Page::Lobby { 0 } else { metrics.gap }
                 ) [
                     Section::Content,
                 ] {
                     Row (
-                        height: i32::from(metrics.title) + 8,
+                        height: if view.page == Page::Lobby { 0 } else { i32::from(metrics.title) + 8 },
                         shrink: 0.0,
                         align: AlignItems::Center,
                         column_gap: metrics.gap
                     ) {
                         Text (
-                            text: ${ state.heading() },
+                            text: ${ if view.page == Page::Lobby { String::new() } else { state.heading() } },
                             grow: 1.0,
                             min_width: 0,
                             height: Dimension::Content,
-                            min_height: i32::from(metrics.title) + 8,
+                            min_height: if view.page == Page::Lobby { 0 } else { i32::from(metrics.title) + 8 },
                             font: font(metrics.title),
                             font_size: metrics.title,
                             text_color: FOREGROUND,
@@ -72,7 +72,8 @@ pub(super) fn page(view: PageKey, state: model!(DisplayState), metrics: Metrics)
                             GpuLayerCache,
                         ]
                         Row (
-                            width: 36,
+                            width: if view.page == Page::Lobby { 0 } else { 36 },
+                            clip_children: true,
                             shrink: 0.0,
                             align: AlignItems::Center,
                             justify: JustifyContent::SpaceBetween
@@ -87,9 +88,9 @@ pub(super) fn page(view: PageKey, state: model!(DisplayState), metrics: Metrics)
                         }
                     }
                     Text (
-                        text: ${ state.status() },
-                        height: Dimension::Content,
-                        min_height: i32::from(metrics.small) + LABEL_LEADING,
+                        text: ${ if view.page == Page::Lobby { String::new() } else { state.status() } },
+                        height: if view.page == Page::Lobby { Dimension::px(0) } else { Dimension::Content },
+                        min_height: if view.page == Page::Lobby { 0 } else { i32::from(metrics.small) + LABEL_LEADING },
                         shrink: 0.0,
                         width: Dimension::percent(100),
                         min_width: 0,
@@ -107,6 +108,12 @@ pub(super) fn page(view: PageKey, state: model!(DisplayState), metrics: Metrics)
                         network_panel (state, metrics)
                     } else {
                         match view.page {
+                            Page :: Lobby => {
+                                lobby (state, metrics)
+                            }
+                            Page :: Candidates => {
+                                game_rows (state, metrics)
+                            }
                             Page :: Choice | Page :: Mode => {
                                 choice (view, state, metrics)
                             }

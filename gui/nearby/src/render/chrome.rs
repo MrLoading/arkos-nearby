@@ -15,9 +15,11 @@ use mirui::ui::widgets::TextAlign::{Center, End, Start};
 
 #[compose]
 pub(super) fn header(view: PageKey, state: model!(DisplayState), metrics: Metrics) -> Entity {
-    let step = if view.page == Page::Mode {
+    let step = if view.page == Page::Lobby {
+        "附近房间".into()
+    } else if view.page == Page::Mode {
         "选择模式".into()
-    } else if view.page == Page::Games {
+    } else if matches!(view.page, Page::Games | Page::Candidates) {
         "选择游戏".into()
     } else {
         format!("步骤 {} / 2", if view.page == Page::Choice { 1 } else { 2 })
@@ -137,7 +139,7 @@ pub(super) fn footer(view: PageKey, state: model!(DisplayState), metrics: Metric
             ) [
                 FONT_PAINT,
             ]
-            if view.page == Page::Rooms {
+            if matches!(view.page, Page::Rooms | Page::Lobby) {
                 keycap ("X", metrics)
                 Text (
                     "刷新",
@@ -151,7 +153,7 @@ pub(super) fn footer(view: PageKey, state: model!(DisplayState), metrics: Metric
                     FONT_PAINT,
                 ]
             }
-            if matches!(view.page, Page::Mode | Page::Choice) {
+            if ${ state.can_switch_theme() } {
                 keycap ("Y", metrics)
                 Text (
                     "主题",

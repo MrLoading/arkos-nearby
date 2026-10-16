@@ -3,10 +3,9 @@ use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
-use crate::context::Context;
 use crate::menu::{MenuSession, OwnedChild};
 use crate::session::{self, NativeBackend};
-use crate::system::{mkdir, private_write, read};
+use crate::system::{mkdir, private_write};
 use crate::{Result, require};
 
 struct Picker {
@@ -93,25 +92,6 @@ pub fn install_result(result: &serde_json::Value) -> Result<()> {
 pub fn run_manual() -> Result<i32> {
     session::identity(false)?;
     let mut menu = MenuSession::open()?;
-    if let Ok(state) = session::state() {
-        if !state.closed() || !state.network_restored || !state.recovery_errors.is_empty() {
-            if state.purpose == crate::purpose::SessionPurpose::NetworkOnly {
-                if menu.run_network()? {
-                    return Ok(0);
-                }
-            } else {
-                let context: Context = read(&state.root().join("context.json"))?;
-                menu.run_with_fallback(
-                    Some(context.clone()),
-                    Some(NativeBackend::shared(context)),
-                    false,
-                )?;
-            }
-            if session::state().is_ok_and(|state| !state.closed() || !state.network_restored) {
-                return Ok(0);
-            }
-        }
-    }
     while let Some(mode) = menu.choose_mode()? {
         match mode {
             crate::flow::FlowExit::NetworkOnly => {
@@ -134,7 +114,10 @@ pub fn run_manual() -> Result<i32> {
                     }
                 }
             }
-            crate::flow::FlowExit::KeepNetwork => return Err("Invalid entry selection".into()),
+            crate::flow::FlowExit::KeepNetwork => return Ok(0),
+            crate::flow::FlowExit::CurrentGame => {
+                return Err("Direct entry has no current game".into());
+            }
         }
     }
     Ok(0)

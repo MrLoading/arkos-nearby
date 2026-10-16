@@ -10,6 +10,7 @@ pub mod flow;
 pub mod game;
 pub mod handheld_link;
 pub mod handshake;
+pub mod home;
 pub mod http;
 pub mod identity;
 pub mod installer;

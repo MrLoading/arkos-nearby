@@ -150,8 +150,10 @@ struct Feedback {
 fn selection(view: &View) -> Option<String> {
     match view.page {
         Page::Mode | Page::Choice => Some(view.selected.to_string()),
-        Page::Rooms => view.rooms.get(view.selected).map(|row| row.key.clone()),
-        Page::Games => view.entries.get(view.selected).map(|row| row.key.clone()),
+        Page::Rooms | Page::Lobby => view.rooms.get(view.selected).map(|row| row.key.clone()),
+        Page::Games | Page::Candidates => {
+            view.entries.get(view.selected).map(|row| row.key.clone())
+        }
         _ => None,
     }
     .filter(|key| !key.is_empty())
@@ -180,13 +182,24 @@ impl Feedback {
         let cue = match action {
             Action::Back if view.page != Page::Leaving => Some(Cue::Back),
             Action::Theme if view.can_switch_theme() => Some(Cue::Confirm),
-            Action::Refresh if view.page == Page::Rooms && !view.busy && !view.refreshing => {
+            Action::Refresh
+                if matches!(view.scene_page(), Page::Rooms | Page::Lobby)
+                    && !view.busy
+                    && !view.refreshing =>
+            {
                 Some(Cue::Refresh)
             }
             Action::Confirm if !view.busy => match view.page {
                 Page::Mode | Page::Choice => Some(Cue::Confirm),
-                Page::Games if !view.entries.is_empty() => Some(Cue::Confirm),
-                Page::Rooms
+                Page::Games | Page::Candidates
+                    if view
+                        .entries
+                        .get(view.selected)
+                        .is_some_and(|row| row.available) =>
+                {
+                    Some(Cue::Confirm)
+                }
+                Page::Rooms | Page::Lobby
                     if view
                         .rooms
                         .get(view.selected)
@@ -214,12 +227,12 @@ impl Feedback {
     }
 
     pub fn observe(&mut self, previous: Option<&View>, next: &View, now: u64) -> Option<Cue> {
-        if previous.is_none_or(|old| old.page != next.page) {
+        if previous.is_none_or(|old| old.scene_page() != next.scene_page()) {
             self.seen_rooms.clear();
             self.navigation_at = None;
         }
         let mut found = false;
-        if next.page == Page::Rooms {
+        if matches!(next.scene_page(), Page::Rooms | Page::Lobby) {
             for room in next
                 .rooms
                 .iter()
@@ -243,7 +256,7 @@ impl Feedback {
             }
         }
         if old.page == Page::Leaving
-            && matches!(next.page, Page::Choice | Page::Rooms)
+            && matches!(next.page, Page::Choice | Page::Rooms | Page::Lobby)
             && !next.busy
         {
             return Some(Cue::Restored);
@@ -251,8 +264,8 @@ impl Feedback {
         if found {
             return Some(Cue::RoomFound);
         }
-        if old.page == next.page
-            && selection(old) != selection(next)
+        if old.scene_page() == next.scene_page()
+            && (old.page != next.page || selection(old) != selection(next))
             && selection(next).is_some()
             && self
                 .navigation_at
@@ -356,6 +369,40 @@ mod tests {
         view.selected = 0;
         assert_eq!(feedback.observe(Some(&old), &view, 101), Some(Cue::Focus));
         assert_eq!(feedback.observe(Some(&view), &view, 102), None);
+    }
+
+    #[test]
+    fn lobby_sheet_focus_preserves_discovery_visit_and_navigation_cues() {
+        let mut feedback = Feedback::default();
+        let mut current = View {
+            page: Page::Lobby,
+            lobby: true,
+            rooms: vec![RoomRow {
+                key: "room".into(),
+                available: true,
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        assert_eq!(feedback.observe(None, &current, 0), None);
+        for (at, page, action) in [
+            (100, Page::Mode, Action::Down),
+            (300, Page::Lobby, Action::Up),
+            (500, Page::Mode, Action::Down),
+        ] {
+            feedback.input(action, &current, at);
+            let old = current.clone();
+            current.page = page;
+            assert_eq!(
+                feedback.observe(Some(&old), &current, at + 1),
+                Some(Cue::Focus)
+            );
+            assert_eq!(feedback.observe(Some(&current), &current, at + 2), None);
+        }
+        assert_eq!(
+            feedback.input(Action::Refresh, &current, 800),
+            Some(Cue::Refresh)
+        );
     }
 
     #[test]

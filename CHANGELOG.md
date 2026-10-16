@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-17
+
+- Keep FN + X exclusive to Nearby Multiplayer while preserving the home menu's standalone X action.
+- Fix a black screen when opening nearby room discovery.
+- Expand room discovery and creation controls in place, with a miniature preview of the collapsed area.
+- Open Create Room / Join Room for the current game directly when holding X during launch.
+- Show nearby game and network rooms on entry, with quick access to room creation and the game library.
+- Find matching local games when joining a room and select the version to use for the session.
+- Show library titles, platform icons, game counts and screenshots.
+- Open Nearby Multiplayer from the system home with FN + X.
+
 ## [0.6.2] - 2026-10-16
 
 - Start page entrance animations when the interface is ready to display.

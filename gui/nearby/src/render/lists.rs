@@ -1,3 +1,5 @@
+use super::artwork::preview;
+use super::choices::choice;
 use super::pixel::Stage::Search;
 use super::selection::FocusTarget;
 use super::{
@@ -9,8 +11,72 @@ use super::{
     widgets::{caption, label, paragraph, shadow},
 };
 use mirui::prelude::*;
-use mirui::ui::widgets::Text;
 use mirui::ui::widgets::TextAlign::{Center, Start};
+use mirui::ui::widgets::{Image, Text};
+
+// Both sheets retain their layout and models while their allocated space changes.
+const DECK_PEEK: Fixed = Fixed::from_ratio(14, 100);
+const DECK_FULL: Fixed = Fixed::from_ratio(86, 100);
+const DECK_MIN_SCALE: Fixed = Fixed::from_ratio(44, 100);
+
+fn sheet_scale(expansion: Fixed) -> Fixed {
+    DECK_MIN_SCALE + (Fixed::ONE - DECK_MIN_SCALE) * expansion
+}
+
+fn sheet_offset(expansion: Fixed) -> Dimension {
+    Dimension::Percent(
+        (sheet_scale(expansion) - Fixed::ONE) * DECK_FULL / sheet_share(expansion)
+            * Fixed::from_int(50),
+    )
+}
+
+fn sheet_transform(expansion: Fixed) -> mirui::types::Transform {
+    let scale = sheet_scale(expansion);
+    mirui::types::Transform::scale(scale, scale)
+}
+
+fn sheet_share(expansion: Fixed) -> Fixed {
+    DECK_PEEK + (DECK_FULL - DECK_PEEK) * expansion
+}
+
+#[compose]
+pub(super) fn lobby(state: model!(DisplayState), metrics: Metrics) -> Entity {
+    ui! {
+        Column (id: "discovery_deck", grow: 1.0, min_height: 0, container: true) {
+            walk [false, true].into_iter() with actions {
+                Column (
+                    height: ${ Dimension::Percent(sheet_share(if actions { state.deck() } else { Fixed::ONE - state.deck() }) * Fixed::from_int(100)) },
+                    shrink: 0.0,
+                    container: true,
+                    min_height: 0,
+                    clip_children: true
+                ) {
+                    Column (
+                        position: Position::Absolute,
+                        width: Dimension::percent(100),
+                        height: @(id("discovery_deck").height as deck_height) { deck_height * DECK_FULL },
+                        top: ${ sheet_offset(if actions { state.deck() } else { Fixed::ONE - state.deck() }) },
+                        transform: ${ sheet_transform(if actions { state.deck() } else { Fixed::ONE - state.deck() }) },
+                        shrink: 0.0,
+                        row_gap: metrics.gap,
+                        padding: Padding::all(metrics.gap),
+                    ) [
+                        super::cache::GpuLayerCache,
+                    ] {
+                        if actions {
+                            label ("仅组网 / 选择游戏", metrics.body, SECONDARY, Start)
+                            choice (super::state::PageKey { page: crate::model::Page::Mode, network_only: false }, state, metrics)
+                        } else {
+                            label ("附近正在玩的伙伴", metrics.title, FOREGROUND, Start)
+                            discovery_status (state, metrics)
+                            rooms (state, metrics)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
 
 #[compose]
 fn row_signal(state: model!(DisplayState), row: model!(Row), metrics: Metrics) -> Entity {
@@ -91,11 +157,52 @@ pub(super) fn room_rows(state: model!(DisplayState), metrics: Metrics) -> Entity
 #[compose]
 pub(super) fn games(state: model!(DisplayState), metrics: Metrics) -> Entity {
     ui! {
-        Column (grow: 1.0, min_height: 0) [
+        Row (grow: 1.0, min_height: 0, column_gap: metrics.gap) [
             Scenery::Ridge,
         ] {
-            game_rows (state, metrics)
+            Column (grow: 3.0, width: Dimension::percent(60), min_width: 0, min_height: 0) {
+                game_rows (state, metrics)
+            }
+            Column (
+                grow: 2.0,
+                width: Dimension::percent(40),
+                min_width: 0,
+                min_height: 0,
+                row_gap: metrics.gap
+            ) {
+                preview (metrics)
+                preview_label (state, metrics)
+            }
         }
+    }
+}
+
+#[compose]
+fn preview_label(state: model!(DisplayState), metrics: Metrics) -> Entity {
+    let title = move || {
+        let selected = state.selected();
+        state
+            .entries()
+            .entries()
+            .into_iter()
+            .find(|(_, row)| Some(row.index()) == selected)
+            .map(|(_, row)| row.label(true))
+            .unwrap_or_default()
+    };
+    ui! {
+        Text (
+            text: ${ title() },
+            width: Dimension::percent(100),
+            height: Dimension::Content,
+            min_width: 0,
+            shrink: 0.0,
+            font: font(metrics.body),
+            font_size: metrics.body,
+            text_color: FOREGROUND,
+            paragraph: paragraph(Center, 3)
+        ) [
+            FONT_PAINT,
+        ]
     }
 }
 
@@ -161,6 +268,49 @@ fn row_label(row: model!(Row), size: u16, title: bool) -> Entity {
 }
 
 #[compose]
+fn platform_icon(row: model!(Row)) -> Entity {
+    ui! {
+        View (width: 24, height: 24, shrink: 0.0) {
+            match ${ row.icon() } {
+                1 => {
+                    Image (
+                        src: path!(
+                            M 5 1 H 19 V 23 H 5 Z M 7 4 V 12 H 17 V 4 Z M 8 15 V 17 H 6 V 19 H 8 V 21 H 10 V
+                            19 H 12 V 17 H 10 V 15 Z M 14 16 V 18 H 16 V 16 Z
+                        ),
+                        width: 24,
+                        height: 24,
+                        color: ACCENT
+                    )
+                }
+                2 => {
+                    Image (
+                        src: path!(
+                            M 5 1 H 19 V 5 H 17 V 14 H 21 V 23 H 3 V 14 H 7 V 5 H 5 Z M 9 5 V 12 H 15 V 5 Z M
+                            7 16 V 18 H 9 V 16 Z M 13 16 V 18 H 17 V 16 Z
+                        ),
+                        width: 24,
+                        height: 24,
+                        color: ACCENT
+                    )
+                }
+                _ => {
+                    Image (
+                        src: path!(
+                            M 3 5 H 21 V 19 H 3 Z M 6 8 V 10 H 4 V 12 H 6 V 14 H 8 V 12 H 10 V 10 H 8 V 8 Z M
+                            14 9 V 12 H 17 V 9 Z M 18 13 V 16 H 21 V 13 Z
+                        ),
+                        width: 24,
+                        height: 24,
+                        color: ACCENT
+                    )
+                }
+            }
+        }
+    }
+}
+
+#[compose]
 fn list_row(
     state: model!(DisplayState),
     item: model!(Row),
@@ -188,7 +338,11 @@ fn list_row(
                 bg_color: ${ state.motion().card_color(color_index.index()) },
                 align: AlignItems::Center
             ) [
-                FocusTarget::row(item.clone()),
+                if has_signal {
+                    FocusTarget::row(item.clone()).scoped(crate::model::Page::Rooms)
+                } else {
+                    FocusTarget::row(item.clone())
+                },
             ] {
                 View (
                     width: metrics.rail_width(),
@@ -203,18 +357,7 @@ fn list_row(
                     }
                 )
                 if !has_signal {
-                    Text (
-                        text: ${ if marker.directory() { ">" } else { "·" } },
-                        width: if metrics.compact { 16 } else { 24 },
-                        shrink: 0.0,
-                        height: Dimension::Content,
-                        font: font(metrics.title),
-                        font_size: metrics.title,
-                        text_color: ACCENT,
-                        paragraph: paragraph(Center, 1)
-                    ) [
-                        FONT_PAINT,
-                    ]
+                    platform_icon (marker)
                 }
                 Column (grow: 1.0, min_width: 0, justify: JustifyContent::Center) {
                     row_label (item.clone(), metrics.row_title, true)
@@ -226,5 +369,12 @@ fn list_row(
             }
             shadow (metrics)
         }
+    }
+}
+
+#[compose]
+fn discovery_status(state: model!(DisplayState), metrics: Metrics) -> Entity {
+    ui! {
+        caption (move || state.status(), || SECONDARY, metrics.small, Start, LABEL_LEADING)
     }
 }

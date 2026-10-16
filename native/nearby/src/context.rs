@@ -302,7 +302,7 @@ fn replace_core(args: &[String], path: &Path) -> Vec<String> {
     args
 }
 
-fn parse_selected(frontend: &str, args: &[String], adapt: bool) -> Result<Context> {
+pub(crate) fn parse_selected(frontend: &str, args: &[String], adapt: bool) -> Result<Context> {
     let mut frontend = frontend.to_owned();
     let mut args = args.to_vec();
     let mut core = inspect(Path::new(&library_argument(&args)?), &frontend)?;

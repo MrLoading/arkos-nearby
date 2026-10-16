@@ -67,6 +67,78 @@ fn context() -> crate::context::Context {
 }
 
 #[test]
+fn lobby_keeps_explicit_selection_and_recovers_before_returning() {
+    use crate::flow::{Flow, Operation, Page};
+    use serde_json::json;
+    let now = || crate::system::monotonic() + 1.0;
+    let mut flow = Flow::lobby(Some(context()), true);
+    assert_eq!(flow.page, Page::Lobby);
+    flow.scan(flow.generation, json!({"rooms":[{"id":"first","ssid":"DIRECT-NW-aaaaaaaaaaaaa","token":"aaaaaaaaaaaaa","signal":70},{"id":"second","ssid":"DIRECT-NP-bbbbbb-bbbbbbbbbbbbb","token":"bbbbbbbbbbbbb","signal":60}]}));
+    flow.dispatch("down", now());
+    flow.dispatch("refresh", now());
+    assert!(flow.request.is_none());
+    flow.dispatch("confirm", now());
+    let request = flow.request.take().unwrap();
+    assert_eq!(request.operation, Operation::Join);
+    assert_eq!(request.payload["room"]["id"], "second");
+    flow.dispatch("back", now());
+    flow.dispatch("back", now());
+    assert_eq!(flow.page, Page::Leaving);
+    let id = "e".repeat(32);
+    flow.complete(
+        &request,
+        json!({"id":id,"phase":"joining","step":"checking","role":"client","context_matches":true}),
+        false,
+    );
+    let cancel = flow.request.take().unwrap();
+    assert_eq!(cancel.operation, Operation::Cancel);
+    flow.complete(
+        &cancel,
+        json!({"id":id,"phase":"closed","network_restored":true,"recovery_errors":[]}),
+        false,
+    );
+    assert_eq!(flow.page, Page::Lobby);
+    assert_eq!(flow.view()["selected"], 1);
+    flow.complete(
+        &request,
+        json!({"id":id,"phase":"ready","ready":true}),
+        false,
+    );
+    assert_eq!(flow.page, Page::Lobby);
+    assert_eq!(flow.view()["ready"], false);
+}
+
+#[test]
+fn candidates_require_available_local_key_and_do_not_imply_readiness() {
+    use crate::flow::{Flow, Operation, Page};
+    use serde_json::json;
+    let now = || crate::system::monotonic() + 1.0;
+    let mut flow = Flow::lobby(None, true);
+    flow.scan(
+        flow.generation,
+        json!({"rooms":[{"id":"selected","signal":80}]}),
+    );
+    flow.dispatch("confirm", now());
+    let join = flow.request.take().unwrap();
+    let id = "f".repeat(32);
+    flow.complete(&join,json!({"id":id,"role":"client","context_matches":true,"phase":"joining","step":"selecting_game","candidates":[{"key":"unavailable","name":"Other","detail":"Different content","directory":false,"available":false},{"key":"valid-local-key","name":"Game","detail":"Verified content","directory":false,"available":true}]}),false);
+    assert_eq!(flow.page, Page::Candidates);
+    assert_eq!(flow.view()["ready"], false);
+    flow.dispatch("confirm", now());
+    assert!(flow.request.is_none());
+    flow.dispatch("down", now());
+    flow.dispatch("confirm", now());
+    let select = flow.request.take().unwrap();
+    assert_eq!(select.operation, Operation::SelectGame);
+    assert_eq!(
+        select.payload,
+        json!({"key":"valid-local-key","session_id":id})
+    );
+    assert_eq!(flow.page, Page::Joined);
+    assert_eq!(flow.view()["ready"], false);
+}
+
+#[test]
 fn unsupported_handheld_link_cannot_offer_create_or_join_actions() {
     let mut context = context();
     context.game_path = "/roms/gba/test.zip".into();
@@ -195,6 +267,40 @@ fn previous_game_cleanup_completes_even_when_the_selected_game_changes() {
         assert_eq!(flow.page, Page::Choice);
         assert_eq!(flow.phase, "idle");
         assert_eq!(flow.view()["room_name"], "");
+        assert_eq!(flow.view()["ready"], false);
+    }
+}
+
+#[test]
+fn direct_lobby_resumes_network_ownership_and_waits_for_recovery() {
+    use crate::flow::{Flow, FlowExit, Operation, Page};
+    use serde_json::json;
+    let now = || crate::system::monotonic() + 1.0;
+    for role in ["host", "client"] {
+        let id = "a".repeat(32);
+        let mut flow = Flow::lobby(None, true);
+        flow.status(flow.generation, json!({"id":id,"role":role,"phase":"network_connected","step":"network_connected","network_only":true,"connected":true,"ready":false,"context_matches":true}));
+        assert_eq!(flow.view()["network_only"], true);
+        assert_eq!(flow.view()["ready"], false);
+        flow.dispatch("confirm", now());
+        let request = flow.request.take().unwrap();
+        assert_eq!(request.operation, Operation::Detach);
+        flow.complete(&request, json!({"id":id,"connected":true}), false);
+        assert_eq!(flow.outcome, Some(FlowExit::KeepNetwork));
+    }
+    for matches in [true, false] {
+        let id = "b".repeat(32);
+        let mut flow = Flow::lobby(None, true);
+        flow.status(flow.generation, json!({"id":id,"role":"host","phase":"restoring","step":"leaving","context_matches":matches,"network_restored":false}));
+        assert_eq!(flow.page, Page::Leaving);
+        flow.dispatch("back", now());
+        assert!(flow.request.is_none());
+        flow.status(
+            flow.generation,
+            json!({"id":id,"phase":"closed","network_restored":true,"recovery_errors":[]}),
+        );
+        assert_eq!(flow.page, Page::Lobby);
+        assert_eq!(flow.view()["network_only"], false);
         assert_eq!(flow.view()["ready"], false);
     }
 }
@@ -379,6 +485,7 @@ fn renderer_contract_contains_display_fields_without_launch_authority() {
         "title",
         "core",
         "selected",
+        "room_selected",
         "rooms",
         "room_name",
         "ready",
@@ -391,6 +498,9 @@ fn renderer_contract_contains_display_fields_without_launch_authority() {
         "connected",
         "local_address",
         "peers",
+        "lobby",
+        "current_game",
+        "entries",
     ]
     .into_iter()
     .collect();
@@ -562,4 +672,25 @@ fn exchanged_credentials_are_authenticated_to_the_current_room_scope() {
     };
     changed.replace_range(0..2, replacement);
     assert!(open(&right, scope, &nonce, &changed).is_err());
+}
+
+#[test]
+fn discovery_actions_preserve_room_selection_and_keep_scanning() {
+    use crate::flow::{Flow, Page};
+    use serde_json::json;
+    let now = || crate::system::monotonic() + 1.0;
+    let mut flow = Flow::lobby(None, true);
+    let rooms = json!({"rooms":[{"id":"first","signal":80},{"id":"second","signal":60}]});
+    flow.scan(flow.generation, rooms.clone());
+    flow.dispatch("down", now());
+    flow.dispatch("down", now());
+    assert_eq!(flow.page, Page::Mode);
+    assert!(flow.scans());
+    assert_eq!(flow.view()["room_selected"], 1);
+    flow.scan(flow.generation, rooms);
+    assert_eq!(flow.view()["rooms"].as_array().unwrap().len(), 2);
+    flow.dispatch("up", now());
+    assert_eq!(flow.page, Page::Lobby);
+    assert_eq!(flow.view()["selected"], 1);
+    assert!(flow.request.is_none());
 }

@@ -64,6 +64,7 @@ pub(super) struct Frame {
     pub press: u16,
     pub wave: Option<u16>,
     pub walker: Fixed,
+    pub deck: Fixed,
     pub host: Fixed,
     pub guest: Fixed,
     pub walking: bool,
@@ -87,6 +88,7 @@ impl Default for Frame {
             press: SETTLED_MS,
             wave: None,
             walker: anchors::CHOICE_LEFT,
+            deck: Fixed::ZERO,
             host: anchors::HOST_HOME,
             guest: anchors::GUEST_HOME,
             walking: false,
@@ -128,6 +130,7 @@ pub(super) struct Timeline {
     press_at: Option<u64>,
     press_sequence: u64,
     walker: Travel,
+    deck: Travel,
     host: Travel,
     guest: Travel,
     visitor: bool,
@@ -189,7 +192,7 @@ impl Timeline {
         press: u64,
     ) -> Frame {
         let key = SceneKey {
-            page: view.page,
+            page: view.scene_page(),
             phase: copy::phase(view),
             ready: view.ready,
             connected: view.connected,
@@ -197,22 +200,30 @@ impl Timeline {
             room: view.room_name.clone(),
         };
         let page_changed = self.key.as_ref().is_none_or(|old| !old.same_page(&key));
-        let catalog_changed = if view.page == Page::Games {
+        let catalog_changed = if matches!(view.page, Page::Games | Page::Candidates) {
             self.catalog
                 .as_ref()
                 .is_none_or(|(path, entries)| path != &view.core || entries != &view.entries)
         } else {
             self.catalog.is_some()
         };
-        let entered = page_changed
+        let deck_target = if view.lobby && view.page == Page::Mode {
+            Fixed::ONE
+        } else {
+            Fixed::ZERO
+        };
+        let pane_changed = self.deck.tween.to != deck_target;
+        self.deck.target(deck_target, now, page_changed);
+        let entered = pane_changed
+            || page_changed
             || catalog_changed
             || self
                 .key
                 .as_ref()
                 .is_some_and(|old| old.network_only != key.network_only);
         if catalog_changed {
-            self.catalog =
-                (view.page == Page::Games).then(|| (view.core.clone(), view.entries.clone()));
+            self.catalog = (matches!(view.page, Page::Games | Page::Candidates))
+                .then(|| (view.core.clone(), view.entries.clone()));
         }
         let continues_session = self.key.as_ref().is_some_and(|old| {
             old.is_session()
@@ -308,6 +319,7 @@ impl Timeline {
                     * u64::from(timing::WAVE_STEP_MS)) as u16,
             ),
             walker: self.walker.value(now),
+            deck: self.deck.value(now),
             host: self.host.value(now),
             guest: self.guest.value(now),
             walking: self.walker.moving(now),

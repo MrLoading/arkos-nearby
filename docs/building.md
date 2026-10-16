@@ -9,7 +9,7 @@
 ## 准备
 
 ```sh
-python3 scripts/build.py prepare /path/to/arkos-nearby-0.6.2-build-assets.tar.gz
+python3 scripts/build.py prepare /path/to/arkos-nearby-0.7.0-build-assets.tar.gz
 cargo +1.92.0 fetch --locked --manifest-path native/nearby/Cargo.toml --target aarch64-unknown-linux-musl
 cargo +1.92.0 fetch --locked --manifest-path gui/nearby/Cargo.toml --target aarch64-unknown-linux-musl
 ```
@@ -26,7 +26,11 @@ GUI 通过 `scripts/build_nearby_gui.py` 构建和检查，直接使用 Cargo.lo
 
 `gui/nearby/src/model.rs` 定义显示协议；`render.rs` 负责安装与 Scene 入口。`render/state.rs` 发布显示状态，`copy.rs` 提供状态文案，`style.rs` 和 `font.rs` 管理尺寸、颜色与字体，`widgets.rs` 组合公共控件。`chrome.rs`、`choices.rs`、`lists.rs`、`sessions.rs` 和 `pages.rs` 构成页面，`composition.rs` 挂载 PageView，`selection.rs` 管理页面内焦点。网络、游戏核对和会话清理仍属于 native runtime。
 
-Options 菜单通过一个 `MenuSession` 连接模式选择、游戏列表与房间流程。`native/nearby/src/menu/display.rs` 持有 GUI 进程、手柄映射和消息通道，跨流程只更新显示快照，退出整个界面时释放进程。后台回复按屏幕会话隔离，输入保留接收时间检查；网络保留与恢复仍由原会话流程决定。游戏内入口使用独立的菜单会话。
+Options 和主页 FN + X 使用直接入口，游戏启动前的 X 入口携带当前游戏。`MenuSession` 连接附近房间、模式选择、游戏列表与房间流程；`menu/display.rs` 持有 GUI 进程、手柄映射和消息通道。后台回复按屏幕会话隔离，输入保留接收时间检查。`home.rs` 的快捷键监听随前台 EmulationStation 进程运行，进入工具时移交显示，退出后恢复前台。
+
+`native/home_input/` 在 EmulationStation 的 SDL 事件入口消费 FN + X 的 X 按下及松开，保留独立 X 和其他按键。启动器仅为该前端加载 `home-input.so`，子程序继承其余环境。使用已有 ARM64 GNU 编译器和 SDL2 头文件执行 `python3 scripts/build_home_input.py build --compiler /path/to/aarch64-linux-gnu-clang --sdl-include /path/to/SDL2/include`；构建产物和来源校验记录一起进入安装包。
+
+`catalog/metadata.rs` 读取本机游戏列表名称、截图和数量；`catalog/matching.rs` 在客户端取得房间描述后匹配本地内容。候选项以会话内标识选择，准备完成仍需核对模拟器、核心和内容身份。`render/artwork.rs` 异步读取选中游戏的截图，通过资源管理器和 Image 控件显示；过期选择的读取结果会被丢弃，图片保持原始比例。
 
 先执行 `python3 scripts/build_nearby_gui.py build` 生成当前源码对应的 GUI 和来源记录，再执行质量检查。`release/manifest.json` 和 `release/assets.json` 保留已发行安装资产的身份；构建时将当前 GUI、字体许可证及来源记录放入新的本地 bundle。
 

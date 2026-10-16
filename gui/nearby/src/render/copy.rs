@@ -6,6 +6,8 @@ pub(super) fn host_action_enabled(view: &View) -> bool {
 
 pub(super) fn page_heading(view: &View) -> &str {
     match view.page {
+        Page::Lobby => "附近正在玩的伙伴",
+        Page::Candidates => "选择本机的对应游戏",
         Page::Mode => "选择连接方式",
         Page::Choice if view.network_only => "和好友建立局域网",
         Page::Choice => "和好友一起，开始游戏",
@@ -30,7 +32,8 @@ pub(super) fn loading(view: &View) -> bool {
     }
     if matches!(
         phase(view),
-        Phase::ApprovalPending
+        Phase::SelectingGame
+            | Phase::ApprovalPending
             | Phase::Closed
             | Phase::Failed
             | Phase::RestoreFailed
@@ -40,7 +43,7 @@ pub(super) fn loading(view: &View) -> bool {
     }
     view.busy
         || view.refreshing
-        || (view.page == Page::Rooms && view.rooms.is_empty())
+        || (matches!(view.page, Page::Rooms | Page::Lobby) && view.rooms.is_empty())
         || (view.page == Page::Host && !view.ready)
         || matches!(view.page, Page::Joined | Page::Leaving)
 }
@@ -71,6 +74,8 @@ pub(super) fn phase(view: &View) -> Phase {
 
 pub(super) fn headline(view: &View) -> &str {
     match phase(view) {
+        Phase::ResolvingGame => "正在查找本机游戏",
+        Phase::SelectingGame => "选择对应游戏",
         Phase::NetworkConfirming => "正在确认连接",
         Phase::NetworkConnected => "组网已完成",
         Phase::NetworkReconnecting => "正在等待连接恢复",
@@ -97,6 +102,7 @@ pub(super) fn headline(view: &View) -> &str {
 pub(super) fn next_step(view: &View) -> &str {
     if view.network_only {
         return match phase(view) {
+            Phase::ResolvingGame | Phase::SelectingGame => "正在查找对应游戏",
             Phase::NetworkConnected => "返回系统后，连接继续保持",
             Phase::NetworkConfirming => "正在确认双方的局域网连接",
             Phase::NetworkReconnecting => "持续失联后会恢复原 Wi-Fi",
@@ -115,11 +121,15 @@ pub(super) fn next_step(view: &View) -> &str {
             | Phase::Notifying
             | Phase::WaitingStart
             | Phase::Starting => "正在确认双方的局域网连接",
-            Phase::Idle if view.page == Page::Rooms => "选择房间，与附近掌机组网",
+            Phase::Idle if matches!(view.page, Page::Rooms | Page::Lobby) => {
+                "选择房间，与附近掌机组网"
+            }
             Phase::Idle => "方向键选择，按 A 确认",
         };
     }
     match phase(view) {
+        Phase::ResolvingGame => "核对本地游戏内容与房间使用的核心",
+        Phase::SelectingGame => "选择匹配的游戏后继续加入",
         Phase::NetworkConnected
         | Phase::NetworkConfirming
         | Phase::NetworkReconnecting
@@ -179,6 +189,8 @@ pub(super) fn status_text(view: &View) -> &str {
         return &view.status;
     }
     match view.page {
+        Page::Lobby => "选择房间，向下展开创建与游戏库",
+        Page::Candidates => "只切换本次联机使用的游戏",
         Page::Mode => "请选择仅组网或选择游戏",
         Page::Choice if view.network_only => "创建房间，或加入附近掌机的房间",
         Page::Host if view.network_only => next_step(view),
@@ -193,10 +205,16 @@ pub(super) fn status_text(view: &View) -> &str {
 }
 
 pub(super) fn hint_text(view: &View) -> &str {
+    if view.page == Page::Lobby {
+        return "下 / R 展开操作";
+    }
+    if view.page == Page::Mode && view.lobby {
+        return "上 / L 展开房间";
+    }
     if view.network_only && view.connected && view.phase == Phase::NetworkConnected {
         return "连接保持中";
     }
-    if view.page == Page::Games {
+    if matches!(view.page, Page::Games | Page::Candidates) {
         return if view.busy {
             "正在核对游戏"
         } else {
@@ -215,7 +233,7 @@ pub(super) fn hint_text(view: &View) -> &str {
         Phase::Starting => "正在进入游戏",
         Phase::Closed | Phase::Failed => "B 返回后重试",
         _ => {
-            if view.page == Page::Rooms {
+            if matches!(view.page, Page::Rooms | Page::Lobby) {
                 "自动搜索"
             } else {
                 "方向键选择"
@@ -225,6 +243,18 @@ pub(super) fn hint_text(view: &View) -> &str {
 }
 
 pub(super) fn confirm_text(view: &View) -> &str {
+    if view.page == Page::Candidates {
+        return if view
+            .entries
+            .get(view.selected)
+            .is_some_and(|row| row.available)
+            && !view.busy
+        {
+            "使用此游戏"
+        } else {
+            ""
+        };
+    }
     if view.network_only && view.connected && view.phase == Phase::NetworkConnected && !view.busy {
         return "返回系统";
     }
@@ -236,7 +266,7 @@ pub(super) fn confirm_text(view: &View) -> &str {
         Phase::ApprovalPending if !view.busy => "确认",
         Phase::Idle => match view.page {
             Page::Choice | Page::Mode => "确认",
-            Page::Rooms
+            Page::Rooms | Page::Lobby
                 if !view.busy
                     && view
                         .rooms
@@ -245,7 +275,7 @@ pub(super) fn confirm_text(view: &View) -> &str {
             {
                 "加入"
             }
-            Page::Games if !view.busy && !view.entries.is_empty() => "选择",
+            Page::Games | Page::Candidates if !view.busy && !view.entries.is_empty() => "选择",
             _ => "",
         },
         _ => "",

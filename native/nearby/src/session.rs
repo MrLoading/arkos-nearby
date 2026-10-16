@@ -465,6 +465,10 @@ pub fn begin(role: &str, context: &Context, selected: Option<RoomEntry>) -> Resu
 }
 pub fn begin_for(role: &str, intent: &SessionIntent, selected: Option<RoomEntry>) -> Result<Value> {
     require(matches!(role, "host" | "client"), "Invalid room role")?;
+    require(
+        role == "client" || !matches!(intent, SessionIntent::DiscoverGame(_)),
+        "Game discovery is a client intent",
+    )?;
     if let Some(room) = &selected {
         require(
             room.purpose() == intent.purpose(),
@@ -502,6 +506,10 @@ pub fn begin_for(role: &str, intent: &SessionIntent, selected: Option<RoomEntry>
         fs::set_permissions(&root, fs::Permissions::from_mode(0o711))?;
         if let Some(context) = intent.context() {
             write(&root.join("context.json"), context)?;
+        }
+        if matches!(intent, SessionIntent::DiscoverGame(_)) {
+            write(&root.join("discover-game.json"), &true)?;
+            write(&root.join("origin-game.json"), &intent.context())?;
         }
         let original = cmd(&["nmcli", "-g", "GENERAL.CON-UUID", "device", "show", "wlan0"])?;
         let entry = if role == "host" {
@@ -614,8 +622,21 @@ pub fn action(name: &str, context: &Context, payload: &Value) -> Result<Value> {
 pub fn status_for(intent: &SessionIntent) -> Result<Value> {
     let mut value = status(intent.context())?;
     if let Ok(state) = state() {
+        value["network_only"] = (state.purpose == SessionPurpose::NetworkOnly).into();
+        if let Ok(summary) = read::<Value>(&state.root().join("room-summary.json")) {
+            value["game_title"] = summary["title"].clone();
+            value["game_core"] = summary["core"].clone();
+        }
         value["context_matches"] =
             (state.purpose == intent.purpose() && state.context_key == intent.key()).into();
+        if matches!(state.step.as_str(), "resolving_game" | "selecting_game") {
+            let candidates: Vec<crate::catalog::matching::Candidate> =
+                read(&state.root().join("candidates.json")).unwrap_or_default();
+            value["candidates"] = json!(candidates.iter().map(|candidate| json!({"key":candidate.key,"name":candidate.name,"detail":candidate.detail,"available":candidate.context.is_some(),"directory":false})).collect::<Vec<_>>());
+            if let Ok(error) = read::<Value>(&state.root().join("match-error.json")) {
+                value["stage"] = error["detail"].clone();
+            }
+        }
     }
     Ok(value)
 }
@@ -626,6 +647,25 @@ pub fn action_for(name: &str, intent: &SessionIntent, payload: &Value) -> Result
         "scan" => scan_for(intent, false, false),
         "scan_refresh" => scan_for(intent, true, payload["force"] == true),
         "create" => begin_for("host", intent, None),
+        "select_game" => {
+            let id = payload["session_id"]
+                .as_str()
+                .ok_or("Selection requires the current session")?;
+            let _lock = lock()?;
+            let mut state = current(id)?;
+            require(
+                state.context_key == intent.key(),
+                "Selection belongs to another join attempt",
+            )?;
+            crate::catalog::matching::select(
+                &state,
+                payload["key"].as_str().ok_or("Select a local candidate")?,
+            )?;
+            state.step = "checking".into();
+            state.stage = "正在准备所选游戏...".into();
+            save(&state)?;
+            status_for(intent)
+        }
         "join" => {
             let selected: RoomEntry = serde_json::from_value(payload["room"].clone())?;
             let actual = RoomEntry::observed(
@@ -733,9 +773,92 @@ pub struct NativeBackend {
     intent: SessionIntent,
     queries: Mutex<()>,
 }
+
+/// Manual discovery retains the selected intent through cancellation and recovery.
+pub struct DiscoveryBackend {
+    origin: Option<Context>,
+    intent: Mutex<SessionIntent>,
+    queries: Mutex<()>,
+}
+
+impl DiscoveryBackend {
+    pub fn shared(origin: Option<Context>) -> Arc<dyn Backend> {
+        let intent = state()
+            .ok()
+            .filter(|state| !state.closed() || !state.network_restored)
+            .and_then(|state| {
+                if state.purpose == SessionPurpose::NetworkOnly {
+                    Some(SessionIntent::NetworkOnly)
+                } else if state.root().join("discover-game.json").is_file() {
+                    let preferred =
+                        read::<Option<Box<Context>>>(&state.root().join("origin-game.json"))
+                            .ok()
+                            .flatten();
+                    Some(SessionIntent::DiscoverGame(preferred))
+                } else {
+                    read::<Context>(&state.root().join("context.json"))
+                        .ok()
+                        .map(|context| SessionIntent::Game(Box::new(context)))
+                }
+            })
+            .unwrap_or_else(|| SessionIntent::DiscoverGame(origin.clone().map(Box::new)));
+        Arc::new(Self {
+            origin,
+            intent: Mutex::new(intent),
+            queries: Mutex::new(()),
+        })
+    }
+}
+
+impl Backend for DiscoveryBackend {
+    fn call(&self, action: &str, payload: &Value) -> Result<Value> {
+        if matches!(action, "scan" | "scan_refresh") {
+            let _lock = self.queries.lock().map_err(|_| "Scan lock failed")?;
+            return scan_observations(
+                self.origin
+                    .as_ref()
+                    .map(|context| context.identity.content.sha256.as_str())
+                    .unwrap_or(""),
+                action == "scan_refresh",
+                payload["force"] == true,
+            );
+        }
+        let intent = {
+            let mut intent = self
+                .intent
+                .lock()
+                .map_err(|_| "Discovery state lock failed")?;
+            if action == "join" {
+                let room: RoomEntry = serde_json::from_value(payload["room"].clone())?;
+                *intent = if room.purpose() == SessionPurpose::NetworkOnly {
+                    SessionIntent::NetworkOnly
+                } else {
+                    SessionIntent::DiscoverGame(self.origin.clone().map(Box::new))
+                };
+            } else if action == "create" {
+                *intent = self
+                    .origin
+                    .clone()
+                    .map(|context| SessionIntent::Game(Box::new(context)))
+                    .unwrap_or(SessionIntent::NetworkOnly);
+            }
+            intent.clone()
+        };
+        let mut value = action_for(action, &intent, payload)?;
+        value["network_only"] = (intent.purpose() == SessionPurpose::NetworkOnly).into();
+        Ok(value)
+    }
+    fn failure_snapshot(&self) -> Value {
+        self.intent
+            .lock()
+            .ok()
+            .and_then(|intent| status_for(&intent).ok())
+            .unwrap_or_else(|| json!({}))
+    }
+}
 impl NativeBackend {
     pub fn shared(context: Context) -> Arc<dyn Backend> {
-        Self::for_intent(SessionIntent::Game(Box::new(context)))
+        DiscoveryBackend::shared(Some(context))
     }
     pub fn for_intent(intent: SessionIntent) -> Arc<dyn Backend> {
         Arc::new(Self {
@@ -832,11 +955,17 @@ pub fn worker(id: &str) -> Result<()> {
         if local.purpose == SessionPurpose::NetworkOnly {
             return crate::network::worker(&local);
         }
-        let context: Context = read(&local.root().join("context.json"))?;
+        let deferred = local.root().join("discover-game.json").is_file();
+        let context: Option<Context> = if deferred {
+            read(&local.root().join("context.json")).ok()
+        } else {
+            Some(read(&local.root().join("context.json"))?)
+        };
         let mut radio_control = None;
         if local.role == "host" {
+            let context = context.as_ref().ok_or("Host requires a selected game")?;
             progress(id, None, "creating", "正在核对游戏与联机核心...")?;
-            let (context, settings) = crate::arcade::host(&local, &context)?;
+            let (context, settings) = crate::arcade::host(&local, context)?;
             write(&local.root().join("context.json"), &context)?;
             crate::game::prepare(&local, &context, None, &settings)?;
             progress(id, None, "creating", "正在准备无线连接...")?;
@@ -850,7 +979,16 @@ pub fn worker(id: &str) -> Result<()> {
             )?;
         } else {
             thread::scope(|scope| -> Result<()> {
-                let verification = scope.spawn(|| context.revalidate());
+                let verification = scope.spawn(|| {
+                    if deferred {
+                        Ok(())
+                    } else {
+                        context
+                            .as_ref()
+                            .ok_or("Client requires a selected game")?
+                            .revalidate()
+                    }
+                });
                 let connection = crate::radio::join(&local);
                 let verified = verification
                     .join()
@@ -863,7 +1001,19 @@ pub fn worker(id: &str) -> Result<()> {
             let verified = VerifiedRoom::observe(room, &local.room.bssid, &local.room.token)?;
             let profile: Profile =
                 serde_json::from_slice(&crate::http::request("/handheld-profile", None)?)?;
-            let matched = context.matching(&verified, &profile)?;
+            profile.validate(&verified)?;
+            write(
+                &local.root().join("room-summary.json"),
+                &json!({"title":verified.room().content.title,"core":verified.room().core.name}),
+            )?;
+            let matched = if deferred {
+                crate::catalog::matching::resolve(&local, &verified, &profile, context.as_ref())?
+            } else {
+                context
+                    .as_ref()
+                    .ok_or("Client requires a selected game")?
+                    .matching(&verified, &profile)?
+            };
             let claim = random_id()?;
             local = update(id, |state| {
                 state.game_session = Some(verified.room().session_id.clone());

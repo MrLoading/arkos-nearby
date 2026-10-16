@@ -47,6 +47,7 @@ impl Replies {
 }
 
 pub(super) struct Display {
+    _lock: Option<crate::system::Lock>,
     stdin: Option<ChildStdin>,
     gui: Option<OwnedChild>,
     mapper: OwnedChild,
@@ -65,6 +66,7 @@ impl Display {
     pub(super) fn open() -> Result<Self> {
         let root = Path::new("/run/arkos-nearby-rust/ui");
         mkdir(root)?;
+        let lock = crate::system::Lock::try_acquire(&root.join("interface.lock"))?;
         let directory = Temporary(root.join(random_id()?));
         mkdir(&directory.0)?;
         let keys = directory.0.join("keys.gptk");
@@ -99,6 +101,7 @@ impl Display {
                 .spawn()?,
         );
         let mut display = Self::connect(gui, mapper)?;
+        display._lock = Some(lock);
         display._directory = Some(directory);
         for signal in [libc::SIGTERM, libc::SIGHUP] {
             display.signals.push(signal_hook::flag::register(
@@ -162,6 +165,7 @@ impl Display {
             });
         });
         Ok(Self {
+            _lock: None,
             stdin: Some(stdin),
             gui: Some(gui),
             mapper,

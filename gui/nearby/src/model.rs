@@ -3,6 +3,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Page {
+    Lobby,
+    Candidates,
     Mode,
     #[default]
     Choice,
@@ -17,6 +19,8 @@ pub enum Page {
 #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Phase {
+    ResolvingGame,
+    SelectingGame,
     #[default]
     Idle,
     Creating,
@@ -55,6 +59,12 @@ pub struct RoomRow {
 #[serde(deny_unknown_fields)]
 pub struct View {
     #[serde(default)]
+    pub lobby: bool,
+    #[serde(default)]
+    pub current_game: bool,
+    #[serde(default)]
+    pub artwork: String,
+    #[serde(default)]
     pub network_only: bool,
     #[serde(default)]
     pub connected: bool,
@@ -66,6 +76,8 @@ pub struct View {
     pub title: String,
     pub core: String,
     pub selected: usize,
+    #[serde(default)]
+    pub room_selected: Option<usize>,
     pub rooms: Vec<RoomRow>,
     pub room_name: String,
     pub ready: bool,
@@ -82,6 +94,14 @@ pub struct View {
 }
 
 impl View {
+    pub fn scene_page(&self) -> Page {
+        if self.lobby && self.page == Page::Mode {
+            Page::Lobby
+        } else {
+            self.page
+        }
+    }
+
     pub fn can_switch_theme(&self) -> bool {
         matches!(self.page, Page::Mode | Page::Choice) && !self.busy
     }
@@ -98,14 +118,35 @@ pub struct NetworkPeer {
     pub address: String,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct GameRow {
+    #[serde(default)]
+    pub icon: String,
+    #[serde(default = "available")]
+    pub available: bool,
     #[serde(default)]
     pub key: String,
     pub name: String,
     pub detail: String,
     pub directory: bool,
+}
+
+impl Default for GameRow {
+    fn default() -> Self {
+        Self {
+            icon: String::new(),
+            available: true,
+            key: String::new(),
+            name: String::new(),
+            detail: String::new(),
+            directory: false,
+        }
+    }
+}
+
+fn available() -> bool {
+    true
 }
 
 #[cfg(test)]

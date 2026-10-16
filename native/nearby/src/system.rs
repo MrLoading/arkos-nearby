@@ -134,6 +134,12 @@ impl Lock {
         Ok(Self(file))
     }
     pub fn acquire(path: &Path) -> Result<Self> {
+        Self::open(path, false)
+    }
+    pub fn try_acquire(path: &Path) -> Result<Self> {
+        Self::open(path, true)
+    }
+    fn open(path: &Path, nonblocking: bool) -> Result<Self> {
         let file = OpenOptions::new()
             .read(true)
             .write(true)
@@ -142,7 +148,12 @@ impl Lock {
             .mode(0o600)
             .open(path)?;
         require(
-            unsafe { libc::flock(std::os::fd::AsRawFd::as_raw_fd(&file), libc::LOCK_EX) } == 0,
+            unsafe {
+                libc::flock(
+                    std::os::fd::AsRawFd::as_raw_fd(&file),
+                    libc::LOCK_EX | if nonblocking { libc::LOCK_NB } else { 0 },
+                )
+            } == 0,
             "Session lock failed",
         )?;
         Ok(Self(file))

@@ -9,7 +9,7 @@ use serde_json::{Value, json};
 
 use crate::Result;
 use crate::context::{Context, INSTALL};
-use crate::flow::{Flow, FlowExit, Page, Request};
+use crate::flow::{Flow, FlowExit, Request};
 use crate::purpose::SessionPurpose;
 use crate::system::{mkdir, monotonic, wall_time, write};
 
@@ -26,6 +26,7 @@ enum Event {
     Scan(u64, Value),
     Action(Request, Value, bool),
     Prepared(std::result::Result<Box<Context>, String>),
+    Indexed(crate::catalog::Index),
 }
 
 enum Outcome {
@@ -81,12 +82,14 @@ mod display;
 
 pub struct MenuSession {
     display: display::Display,
+    lobby_flow: Option<Flow>,
 }
 
 impl MenuSession {
     pub fn open() -> Result<Self> {
         Ok(Self {
             display: display::Display::open()?,
+            lobby_flow: None,
         })
     }
     pub fn run_with_fallback(
@@ -128,7 +131,19 @@ impl MenuSession {
     }
 
     pub fn choose_mode(&mut self) -> Result<Option<FlowExit>> {
-        match self.run_screen(None, None, false, None, SessionPurpose::NetworkOnly, true)? {
+        self.lobby(None, false)
+    }
+
+    fn lobby(&mut self, context: Option<Context>, single_player: bool) -> Result<Option<FlowExit>> {
+        let backend = crate::session::DiscoveryBackend::shared(context.clone());
+        match self.run_screen(
+            context,
+            Some(backend),
+            single_player,
+            None,
+            SessionPurpose::Game,
+            true,
+        )? {
             Outcome::Mode(mode) => Ok(Some(mode)),
             Outcome::Exit(_) => Ok(None),
             _ => Err("Invalid mode result".into()),
@@ -138,9 +153,7 @@ impl MenuSession {
     pub fn run_network(&mut self) -> Result<bool> {
         match self.run_screen(
             None,
-            Some(crate::session::NativeBackend::for_intent(
-                crate::purpose::SessionIntent::NetworkOnly,
-            )),
+            Some(crate::session::DiscoveryBackend::shared(None)),
             false,
             None,
             SessionPurpose::NetworkOnly,
@@ -164,11 +177,27 @@ impl MenuSession {
         let sender = self.display.begin_screen();
         if let Some(browser) = &mut browser {
             browser.input_epoch = monotonic();
+            if browser.indexing {
+                let job = browser.index_job();
+                let sender = sender.clone();
+                thread::spawn(move || sender.send(Event::Indexed(job.run())));
+            }
         }
         let mut preparing = None;
         let result = (|| -> Result<Outcome> {
             let mut flow = if mode_picker {
-                Flow::modes()
+                let connected = !crate::session::best(&[
+                    "nmcli",
+                    "-g",
+                    "IP4.ADDRESS",
+                    "device",
+                    "show",
+                    "wlan0",
+                ])
+                .is_empty();
+                self.lobby_flow
+                    .take()
+                    .unwrap_or_else(|| Flow::lobby(context, connected))
             } else if purpose == SessionPurpose::NetworkOnly {
                 Flow::network()
             } else {
@@ -210,6 +239,7 @@ impl MenuSession {
                             }
                             browser.prepared(result.map(|context| *context));
                         }
+                        Ok(Some(Event::Indexed(index))) => browser.indexed(index),
                         Ok(Some(Event::FrameReady)) => {
                             log(json!({"phase":"frame_submitted","frame_submitted":true}))?
                         }
@@ -235,7 +265,7 @@ impl MenuSession {
                         });
                     }
                     if !scan_pending
-                        && flow.page == Page::Rooms
+                        && flow.scans()
                         && (flow.refresh_requested || now - last_scan >= 0.35)
                     {
                         scan_pending = true;
@@ -304,7 +334,7 @@ impl MenuSession {
                     Ok(Some(Event::Action(request, result, failed))) => {
                         flow.complete(&request, result, failed)
                     }
-                    Ok(Some(Event::Prepared(_))) => {}
+                    Ok(Some(Event::Prepared(_) | Event::Indexed(_))) => {}
                     Ok(None) | Err(mpsc::RecvTimeoutError::Timeout) => {}
                     Err(error) => return Err(error.into()),
                 }
@@ -312,10 +342,15 @@ impl MenuSession {
             log(
                 json!({"phase":"finished","exit_code":flow.exit_code.unwrap_or(0),"last_view":self.display.previous()}),
             )?;
-            Ok(match flow.outcome {
+            let outcome = match flow.outcome {
                 Some(mode) => Outcome::Mode(mode),
                 None => Outcome::Exit(flow.exit_code.unwrap_or(0)),
-            })
+            };
+            if mode_picker && flow.outcome.is_some() {
+                flow.resume_lobby();
+                self.lobby_flow = Some(flow);
+            }
+            Ok(outcome)
         })();
         if let Some(worker) = preparing {
             let _ = worker.join();

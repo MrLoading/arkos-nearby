@@ -133,7 +133,9 @@ impl DisplayState {
         self.confirm_visible = !confirm_text(view).is_empty();
         let active = match phase(view) {
             Phase::Connecting => Some(0),
-            Phase::Checking | Phase::Notifying => Some(1),
+            Phase::ResolvingGame | Phase::SelectingGame | Phase::Checking | Phase::Notifying => {
+                Some(1)
+            }
             Phase::WaitingStart | Phase::Starting => Some(2),
             _ => None,
         };
@@ -156,12 +158,14 @@ impl DisplayState {
             }
         });
         let first = view
-            .selected
+            .room_selected
+            .unwrap_or(view.selected)
             .saturating_sub(3)
             .min(view.rooms.len().saturating_sub(4));
         let previous_first = self
             .view
-            .selected
+            .room_selected
+            .unwrap_or(self.view.selected)
             .saturating_sub(3)
             .min(self.view.rooms.len().saturating_sub(4));
         let rooms_changed = previous_first != first
@@ -222,7 +226,7 @@ impl DisplayState {
         changes.update(
             &mut self.subtitle,
             match view.page {
-                Page::Mode => "连接附近的掌机".into(),
+                Page::Mode | Page::Lobby if !view.current_game => "连接附近的掌机".into(),
                 _ if view.network_only => "仅组网 · 局域网连接".into(),
                 Page::Games => view.core.clone(),
                 _ => format!("当前游戏  {}", view.title),
@@ -278,7 +282,7 @@ impl DisplayState {
     #[observe]
     pub(super) fn page_key(&self) -> PageKey {
         PageKey {
-            page: self.view.page,
+            page: self.view.scene_page(),
             network_only: self.view.network_only
                 && matches!(
                     self.view.page,
@@ -307,15 +311,41 @@ impl DisplayState {
     #[observe]
     pub(super) fn selected(&self) -> Option<usize> {
         match self.view.page {
-            Page::Mode | Page::Choice => Some(self.view.selected.min(1)),
-            Page::Rooms if !self.view.rooms.is_empty() => {
+            Page::Mode => Some(
+                self.view
+                    .selected
+                    .min(if self.view.current_game { 2 } else { 1 }),
+            ),
+            Page::Choice => Some(self.view.selected.min(1)),
+            Page::Rooms | Page::Lobby if !self.view.rooms.is_empty() => {
                 Some(self.view.selected.min(self.view.rooms.len() - 1))
             }
-            Page::Games if !self.view.entries.is_empty() => Some(self.view.selected.min(3)),
+            Page::Games | Page::Candidates if !self.view.entries.is_empty() => {
+                Some(self.view.selected.min(3))
+            }
             Page::Host if host_action_enabled(&self.view) => Some(0),
             Page::Joined if self.view.network_only && host_action_enabled(&self.view) => Some(0),
             _ => None,
         }
+    }
+
+    #[observe]
+    pub(super) fn focus_page(&self) -> Page {
+        self.view.page
+    }
+
+    #[observe]
+    pub(super) fn deck(&self) -> Fixed {
+        self.motion.deck
+    }
+
+    #[observe]
+    pub(super) fn current_game(&self) -> bool {
+        self.view.current_game
+    }
+
+    pub(super) fn artwork(&self) -> String {
+        self.view.artwork.clone()
     }
 
     #[observe]

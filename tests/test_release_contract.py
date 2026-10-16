@@ -24,6 +24,7 @@ class ReleaseContract(unittest.TestCase):
                             "native/core_inspect/",
                             "native/core_probe/",
                             "native/netplay_compression/",
+                            "native/home_input/",
                             "native/owned_cores/",
                             "gui/nearby/",
                         )

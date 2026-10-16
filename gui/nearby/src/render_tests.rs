@@ -227,6 +227,8 @@ fn view(page: Page) -> View {
                 name: format!("游戏 {i} / Multiplayer"),
                 detail: "NES / FC".into(),
                 directory: false,
+                icon: "nes".into(),
+                available: true,
             })
             .collect(),
         status: "请选择".into(),
@@ -295,6 +297,8 @@ fn dynamic_updates_preserve_static_caches_and_one_model_registration() {
         Page::Mode,
         Page::Choice,
         Page::Rooms,
+        Page::Lobby,
+        Page::Candidates,
         Page::Games,
         Page::Host,
         Page::Joined,
@@ -387,6 +391,8 @@ fn responsive_layout_keeps_focus_and_text_sections_inside_the_viewport() {
             Page::Mode,
             Page::Choice,
             Page::Rooms,
+            Page::Lobby,
+            Page::Candidates,
             Page::Games,
             Page::Host,
             Page::Joined,
@@ -1147,4 +1153,57 @@ fn entry_motion_starts_at_the_installed_framework_clock() {
     assert_eq!(scene.state.motion().selection, 0);
     paint_at(&mut app, &scene, 5080);
     assert_eq!(scene.state.motion().selection, 80);
+}
+
+#[test]
+fn lobby_sheets_retain_entities_and_scope_focus_through_reversal() {
+    for size in [[480, 320], [640, 480]] {
+        let mut app = app(size);
+        let mut current = view(Page::Lobby);
+        current.lobby = true;
+        current.selected = 3;
+        current.room_selected = Some(3);
+        let mut scene = draw(&mut app, &current).unwrap();
+        let retained = body(&app);
+        let target = |app: &TestApp| {
+            let frame = app
+                .world
+                .query::<selection::SelectionFrame>()
+                .iter()
+                .find(|(_, frame)| frame.page == frame.state.page_key())
+                .unwrap()
+                .0;
+            app.world.get::<FollowBounds>(frame).unwrap().target
+        };
+        paint_at(&mut app, &scene, 1000);
+        let room_target = target(&app);
+        for (time, page) in [
+            (1100, Page::Mode),
+            (1180, Page::Lobby),
+            (1260, Page::Mode),
+            (1800, Page::Lobby),
+        ] {
+            let before = scene.state.deck();
+            current.page = page;
+            current.selected = if page == Page::Mode { 0 } else { 3 };
+            update(&mut scene, &current).unwrap();
+            scene.state.animate(now_ns() / 1_000_000, 0);
+            assert_eq!(
+                scene.state.deck(),
+                before,
+                "Retarget starts at the current position"
+            );
+            paint_at(&mut app, &scene, time);
+            assert_eq!(body(&app), retained);
+            assert_eq!(scene.state.rooms().len(), 4);
+            if page == Page::Mode {
+                assert_ne!(target(&app), room_target);
+            } else {
+                assert_eq!(target(&app), room_target);
+            }
+            assert_full_frame_matches(&mut app, "Deck compression and rapid reversal");
+        }
+        paint_at(&mut app, &scene, 2400);
+        assert_eq!(scene.state.deck(), Fixed::ZERO);
+    }
 }

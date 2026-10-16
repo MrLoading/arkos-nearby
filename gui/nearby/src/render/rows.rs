@@ -22,6 +22,7 @@ pub(super) struct Row {
     key: Key,
     name: String,
     detail: String,
+    room: bool,
     #[observe]
     pub index: usize,
     #[observe]
@@ -30,6 +31,8 @@ pub(super) struct Row {
     pub available: bool,
     #[observe]
     pub directory: bool,
+    #[observe]
+    pub icon: u8,
 }
 
 #[model]
@@ -37,7 +40,7 @@ impl Row {
     fn text_value(&self, title: bool) -> String {
         if title {
             self.name.clone()
-        } else if self.available {
+        } else if self.available || !self.room {
             self.detail.clone()
         } else {
             "房间已离线，等待重新出现".into()
@@ -60,9 +63,11 @@ impl Row {
             index,
             name: data.name.clone(),
             detail: data.detail.clone(),
+            room: true,
             strength: data.signal,
             available: data.available,
             directory: false,
+            icon: 0,
         }
     }
     pub fn game(index: usize, data: &GameRow) -> Self {
@@ -71,9 +76,15 @@ impl Row {
             index,
             name: data.name.clone(),
             detail: data.detail.clone(),
+            room: false,
             strength: 0,
-            available: true,
+            available: data.available,
             directory: data.directory,
+            icon: match data.icon.as_str() {
+                "gb" | "gbc" | "gba" => 1,
+                "arcade" | "neogeo" | "cps1" | "cps2" | "cps3" => 2,
+                _ => 0,
+            },
         }
     }
 }

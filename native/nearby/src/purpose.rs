@@ -16,6 +16,7 @@ pub enum SessionPurpose {
 #[derive(Clone)]
 pub enum SessionIntent {
     Game(Box<Context>),
+    DiscoverGame(Option<Box<Context>>),
     NetworkOnly,
 }
 
@@ -23,22 +24,26 @@ impl SessionIntent {
     pub fn context(&self) -> Option<&Context> {
         match self {
             Self::Game(context) => Some(context),
+            Self::DiscoverGame(context) => context.as_deref(),
             Self::NetworkOnly => None,
         }
     }
     pub fn purpose(&self) -> SessionPurpose {
         match self {
-            Self::Game(_) => SessionPurpose::Game,
+            Self::Game(_) | Self::DiscoverGame(_) => SessionPurpose::Game,
             Self::NetworkOnly => SessionPurpose::NetworkOnly,
         }
     }
     pub fn key(&self) -> Value {
+        if let Self::DiscoverGame(context) = self {
+            return json!({"purpose":"discover_game","origin":context.as_ref().map(|context| context.key())});
+        }
         self.context()
             .map(Context::key)
             .unwrap_or_else(|| json!({"purpose":"network_only"}))
     }
     pub fn revalidate(&self) -> Result<()> {
-        if let Some(context) = self.context() {
+        if let Self::Game(context) = self {
             context.revalidate()?;
         }
         Ok(())

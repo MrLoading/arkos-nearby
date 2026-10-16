@@ -2,7 +2,7 @@
 
 ## 下载与校验
 
-两台掌机安装同一个版本。下载 [arkos-nearby-0.6.2-arm64.tar.gz](https://github.com/W-Mai/arkos-nearby/releases/download/v0.6.2/arkos-nearby-0.6.2-arm64.tar.gz) 和 [SHA256SUMS](https://github.com/W-Mai/arkos-nearby/releases/download/v0.6.2/SHA256SUMS)。在下载目录执行 `sha256sum --ignore-missing -c SHA256SUMS`；macOS 可使用 `shasum -a 256 -c SHA256SUMS` 并只核对实际下载的文件。
+两台掌机安装同一个版本。下载 [arkos-nearby-0.7.0-arm64.tar.gz](https://github.com/W-Mai/arkos-nearby/releases/download/v0.7.0/arkos-nearby-0.7.0-arm64.tar.gz) 和 [SHA256SUMS](https://github.com/W-Mai/arkos-nearby/releases/download/v0.7.0/SHA256SUMS)。在下载目录执行 `sha256sum --ignore-missing -c SHA256SUMS`；macOS 可使用 `shasum -a 256 -c SHA256SUMS` 并只核对实际下载的文件。
 
 解压后包含 `arkos-nearby`、`Install Nearby Multiplayer.sh`、安装说明、许可证和可执行文件校验值。
 
@@ -10,7 +10,7 @@
 
 将解压出的 `arkos-nearby` 文件夹复制到游戏卡的 `ports` 目录。在掌机的 Ports 中打开 `Install Nearby Multiplayer.sh`。程序与脚本必须放在同一目录。安装器检查实际内核、无线芯片、屏幕、系统工具和启动脚本结构，通过后安装应用并添加手动入口。
 
-安装完成后，Options 中的 Nearby Multiplayer 提供「仅组网」和「选择游戏」两个入口。也可以在游戏开始加载前按住 X，进入当前游戏的联机界面。
+安装完成后重启掌机。通过 Options → Nearby Multiplayer 或主页 FN + X 打开工具，已连接 Wi-Fi 时会显示附近房间。向下移动或按 R 展开「仅组网／选择游戏」，向上移动或按 L 返回房间列表。单独按 X 保留主页的随机选择功能。游戏开始加载前按住 X，可直接进入当前游戏的创建／加入房间界面。
 
 在选择模式或创建／加入房间的入口页按 Y 切换松林、落日和夜营主题。配色会自动保存。
 
@@ -36,7 +36,7 @@ sudo /home/ark/arkos-nearby-installer install
 
 ## 更新
 
-退出游戏和联机房间，等待原 Wi-Fi 恢复。运行新版安装脚本或新版可执行文件的 `install` 即可更新。已有配对凭据、设备身份、记住的设备和原启动文件备份会保留。两端更新到相同版本后再联机。
+退出游戏和联机房间，等待原 Wi-Fi 恢复，再退出 Nearby Multiplayer 回到游戏列表。运行新版安装脚本或新版可执行文件的 `install` 即可更新。已有配对凭据、设备身份、记住的设备和原启动文件备份会保留。更新完成后重启掌机，两端使用相同版本再联机。
 
 也可以在设备上执行：
 
@@ -56,6 +56,6 @@ sudo /opt/arkos-nearby/arkos-nearby uninstall
 
 ## 安装内容
 
-运行程序、图形界面、核心查询器、无线资产、许可证与诊断日志位于 `/opt/arkos-nearby/`。Options 入口为 `/opt/system/Nearby Multiplayer.sh`。安装器修改已识别的 `/usr/local/bin/retroarch` 和 `retroarch32` 启动脚本中的 X 分支，原始字节保存在 `original-launch/`。
+运行程序、图形界面、核心查询器、无线资产、许可证与诊断日志位于 `/opt/arkos-nearby/`。Options 入口为 `/opt/system/Nearby Multiplayer.sh`。安装器接入已识别的 RetroArch 启动脚本 X 分支，以及 EmulationStation 的 FN + X 主页快捷键；原始脚本保存在 `original-launch/`，卸载时恢复。
 
 创建或加入房间时加载联机驱动，结束联机后恢复原驱动和之前连接的 Wi-Fi。仅组网完成后选择「保持连接，返回系统」会保留网络。临时会话文件位于 `/run/arkos-nearby-rust/`，诊断日志保存在 `/opt/arkos-nearby/logs/`。

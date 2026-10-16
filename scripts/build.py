@@ -13,6 +13,7 @@ import tomllib
 
 import build_nearby_gui as gui
 import build_core_probe
+import build_home_input
 import build_paths
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -54,6 +55,7 @@ def prepare(archive):
 
 def bundle():
     build_core_probe.artifacts(ASSETS)
+    build_home_input.artifacts(ASSETS / "assets")
     manifest = json.loads((ROOT / "release/manifest.json").read_text())
     manifest["version"] = tomllib.loads(MANIFEST.read_text())["package"]["version"]
     renderer_files = gui.artifacts(ASSETS)

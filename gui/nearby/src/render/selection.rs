@@ -6,6 +6,7 @@ use mirui::ui::{Hidden, Parent};
 #[component]
 pub(super) struct FocusTarget {
     fixed: usize,
+    scope: Option<crate::model::Page>,
     row: model!(optional super::rows::Row),
 }
 
@@ -13,14 +14,27 @@ impl FocusTarget {
     pub fn fixed(index: usize) -> Self {
         Self {
             fixed: index,
+            scope: None,
             row: None,
         }
     }
     pub fn row(row: super::rows::RowHandle) -> Self {
         Self {
             fixed: 0,
+            scope: None,
             row: Some(row),
         }
+    }
+    pub fn scoped(mut self, page: crate::model::Page) -> Self {
+        self.scope = Some(page);
+        self
+    }
+    fn active(&self, state: &super::state::DisplayHandle) -> bool {
+        self.scope.is_none_or(|scope| {
+            scope == state.focus_page()
+                || scope == crate::model::Page::Rooms
+                    && state.focus_page() == crate::model::Page::Lobby
+        })
     }
     pub fn index(&self) -> usize {
         self.row.as_ref().map_or(self.fixed, |row| row.index())
@@ -57,7 +71,10 @@ fn resolve<'a>(
 ) -> Option<Entity> {
     let selected = frame.state.selected();
     targets.into_iter().find_map(|(node, target)| {
-        (selected == Some(target.index()) && contains(frame.body, node, &parent)).then_some(node)
+        (target.active(&frame.state)
+            && selected == Some(target.index())
+            && contains(frame.body, node, &parent))
+        .then_some(node)
     })
 }
 
@@ -124,7 +141,8 @@ fn initialize_target(
         return;
     };
     for (entity, frame, hidden) in frames {
-        if frame.state.selected() == Some(target.index())
+        if target.active(&frame.state)
+            && frame.state.selected() == Some(target.index())
             && contains(frame.body, node, |e| parents.get(e).map(|p| p.0))
         {
             follow(

@@ -86,6 +86,17 @@
     "included": true
   },
   {
+    "name": "byteorder-lite",
+    "version": "0.1.0",
+    "license": "Unlicense OR MIT",
+    "repository": "https://github.com/image-rs/byteorder-lite",
+    "checksum": "8f1fe948ff07f4bd06c30984e69f5b4899c516a3ef74f34df92a2df2ab535495",
+    "license_files": [
+      "docs/licenses/rust/byteorder-lite-0.1.0/LICENSE-MIT"
+    ],
+    "included": true
+  },
+  {
     "name": "cc",
     "version": "1.4.7",
     "license": "MIT OR Apache-2.0",
@@ -331,6 +342,18 @@
     "license_files": [
       "docs/licenses/rust/hashbrown-0.15.5/LICENSE-APACHE",
       "docs/licenses/rust/hashbrown-0.15.5/LICENSE-MIT"
+    ],
+    "included": true
+  },
+  {
+    "name": "image",
+    "version": "0.25.6",
+    "license": "MIT OR Apache-2.0",
+    "repository": "https://github.com/image-rs/image",
+    "checksum": "db35664ce6b9810857a38a906215e75a9c879f0696556a39f59c62829710251a",
+    "license_files": [
+      "docs/licenses/rust/image-0.25.6/LICENSE-APACHE",
+      "docs/licenses/rust/image-0.25.6/LICENSE-MIT"
     ],
     "included": true
   },
@@ -593,6 +616,18 @@
       "docs/licenses/rust/ring-0.17.14/LICENSE",
       "docs/licenses/rust/ring-0.17.14/LICENSE-BoringSSL",
       "docs/licenses/rust/ring-0.17.14/LICENSE-other-bits"
+    ],
+    "included": true
+  },
+  {
+    "name": "roxmltree",
+    "version": "0.21.1",
+    "license": "MIT OR Apache-2.0",
+    "repository": "https://github.com/RazrFalcon/roxmltree",
+    "checksum": "f1964b10c76125c36f8afe190065a4bf9a87bf324842c05701330bba9f1cacbb",
+    "license_files": [
+      "docs/licenses/rust/roxmltree-0.21.1/LICENSE-APACHE",
+      "docs/licenses/rust/roxmltree-0.21.1/LICENSE-MIT"
     ],
     "included": true
   },
@@ -1161,6 +1196,28 @@
     "checksum": "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b",
     "license_files": [
       "docs/licenses/rust/zmij-1.0.23/LICENSE-MIT"
+    ],
+    "included": true
+  },
+  {
+    "name": "zune-core",
+    "version": "0.4.12",
+    "license": "MIT OR Apache-2.0 OR Zlib",
+    "repository": null,
+    "checksum": "3f423a2c17029964870cfaabb1f13dfab7d092a62a29a89264f4d36990ca414a",
+    "license_files": [
+      "docs/licenses/rust/zune-core-0.4.12/LICENSE-ZLIB"
+    ],
+    "included": true
+  },
+  {
+    "name": "zune-jpeg",
+    "version": "0.4.21",
+    "license": "MIT OR Apache-2.0 OR Zlib",
+    "repository": "https://github.com/etemesi254/zune-image/tree/dev/crates/zune-jpeg",
+    "checksum": "29ce2c8a9384ad323cf564b67da86e21d3cfdff87908bc1223ed5c99bc792713",
+    "license_files": [
+      "docs/licenses/rust/zune-jpeg-0.4.21/LICENSE-ZLIB"
     ],
     "included": true
   }

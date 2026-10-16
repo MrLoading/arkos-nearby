@@ -7,6 +7,7 @@ use mirui::ui::widgets::page_view;
 use state::{DisplayHandle, PageKey};
 use style::{ACCENT_DIM, BACKGROUND, Metrics};
 
+mod artwork;
 mod cache;
 mod choices;
 mod chrome;
@@ -54,6 +55,7 @@ pub fn install<B: Surface, F: RendererFactory<B>>(app: &mut App<B, F>) -> Result
     app.with_widget(cache::gpu_layer::view());
     font::install(app)?;
     state::install(app);
+    artwork::install(app);
     Ok(())
 }
 

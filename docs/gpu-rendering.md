@@ -4,7 +4,7 @@
 
 ## 构建环境
 
-需要 Rust 1.92、`aarch64-unknown-linux-gnu` 标准库、ARM64 GNU C 链接器及与设备兼容的 sysroot。SDL2 源码随 Release 提供；锁定的 Rust 依赖位于 `arkos-nearby-0.6.2-rust-sources.tar.gz`。
+需要 Rust 1.92、`aarch64-unknown-linux-gnu` 标准库、ARM64 GNU C 链接器及与设备兼容的 sysroot。SDL2 源码随 Release 提供；锁定的 Rust 依赖位于 `arkos-nearby-0.7.0-rust-sources.tar.gz`。
 
 使用现有的 ARM64 CMake 工具链文件构建 SDL2。工具链应设置 Linux、aarch64、交叉编译器和 sysroot，并将库、头文件及包查询限制到 sysroot。sysroot 需包含 PulseAudio 和 ALSA 开发头文件与库。构建结果中的 `SDL_config.h` 应定义 `SDL_AUDIO_DRIVER_PULSEAUDIO` 和 `SDL_AUDIO_DRIVER_ALSA`，动态库名分别为 `libpulse.so.0` 和 `libasound.so.2`。
 
@@ -48,6 +48,8 @@ SDL_VIDEODRIVER=kmsdrm SDL_INPUT_LINUX_KEEP_KBD=1 /path/to/arkos-nearby-gui --gp
 ```
 
 检查程序要求 SDL 渲染器为 `opengles2`，绘制模式选择页，并在交换缓冲区前保存 PNG。标准输出包含渲染器、首帧耗时和截图字节数。检查结束后恢复前端；正式菜单运行日志包含渲染后端与帧耗时统计。
+
+传入显示状态 JSON 可检查指定页面：`arkos-nearby-gui --gpu-probe /path/to/view.json /tmp/nearby-gpu.png`。该命令使用设备的 GPU 后端绘制并返回渲染错误，可用于核对页面的实际输出。
 
 菜单启动器设置 `SDL_INPUT_LINUX_KEEP_KBD=1`，让手柄映射生成的按键继续进入 TTY 输入通道。SDL 保留事件轮询，页面操作仍通过既有显示协议发送给房间管理器。
 

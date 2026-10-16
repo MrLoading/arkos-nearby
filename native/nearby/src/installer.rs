@@ -114,6 +114,7 @@ struct Change {
 
 fn allowed_target(name: &str) -> bool {
     name == ENTRY_PATH
+        || name == crate::home::LAUNCHER
         || matches!(
             name,
             "usr/local/bin/retroarch" | "usr/local/bin/retroarch32"
@@ -130,6 +131,7 @@ fn allowed_target(name: &str) -> bool {
                         | "identity.json"
                         | "original-launch/retroarch"
                         | "original-launch/retroarch32"
+                        | "original-launch/emulationstation"
                 )
         })
 }
@@ -248,11 +250,14 @@ fn verify_record(record: &Record, layout: &Layout) -> Result<()> {
     }
     for (name, expected) in &record.wrappers {
         require(
-            matches!(name.as_str(), "retroarch" | "retroarch32"),
+            matches!(
+                name.as_str(),
+                "retroarch" | "retroarch32" | "emulationstation"
+            ),
             "Invalid recorded launcher",
         )?;
         require(
-            digest(&layout.path(&format!("usr/local/bin/{name}")))? == *expected,
+            digest(&layout.path(&wrapper_path(name)))? == *expected,
             "Launcher was changed externally",
         )?;
     }
@@ -260,6 +265,13 @@ fn verify_record(record: &Record, layout: &Layout) -> Result<()> {
         digest(&layout.path(ENTRY_PATH))? == record.entry_sha256,
         "Options entry was changed externally",
     )
+}
+fn wrapper_path(name: &str) -> String {
+    if name == "emulationstation" {
+        crate::home::LAUNCHER.into()
+    } else {
+        format!("usr/local/bin/{name}")
+    }
 }
 fn check_idle_ui() -> Result<()> {
     for process in fs::read_dir("/proc")?.filter_map(|entry| entry.ok()) {
@@ -345,6 +357,39 @@ fn install_at(
         });
     }
     let entry = layout.path(ENTRY_PATH);
+    let home = layout.path(crate::home::LAUNCHER);
+    if home.is_file() {
+        let backup_name = "original-launch/emulationstation";
+        let backup = layout.file(backup_name);
+        let current = fs::read(&home)?;
+        let original = if backup.is_file() {
+            fs::read(&backup)?
+        } else {
+            current.clone()
+        };
+        let updated = crate::home::patched(&original)?;
+        require(
+            current == original
+                || current == updated
+                || previous.as_ref().is_some_and(|record| {
+                    record.wrappers.get("emulationstation") == Some(&hash(&current))
+                }),
+            "Home launcher contains unrelated edits",
+        )?;
+        if !backup.exists() {
+            changes.push(Change {
+                target: format!("{ROOT}/{backup_name}"),
+                data: Some(original),
+                mode: 0o755,
+            });
+        }
+        wrappers.insert("emulationstation".into(), hash(&updated));
+        changes.push(Change {
+            target: crate::home::LAUNCHER.into(),
+            data: Some(updated),
+            mode: 0o755,
+        });
+    }
     if previous.is_none() && entry.exists() {
         let current = fs::read(&entry)?;
         require(current==ENTRY || current==b"#!/bin/sh\nexec sudo -n /usr/bin/python3 /opt/arkos-nearby/nearby_manual.py\n","Options entry has unrelated contents")?;
@@ -452,14 +497,19 @@ pub fn install() -> Result<Value> {
     let device = facts.device()?;
     let bundle = Bundle::embedded()?;
     check_idle_ui()?;
-    crate::session::while_idle(|| {
+    let mut result = crate::session::while_idle(|| {
         install_at(
             &Layout::system(),
             device,
             &bundle,
             &std::env::current_exe()?,
         )
-    })
+    })?;
+    match crate::home::activate() {
+        Ok(active) => result["home_shortcut_active"] = active.into(),
+        Err(error) => result["home_shortcut_error"] = error.to_string().into(),
+    }
+    Ok(result)
 }
 
 fn uninstall_at(layout: &Layout) -> Result<Value> {
@@ -470,11 +520,16 @@ fn uninstall_at(layout: &Layout) -> Result<Value> {
     for name in record.wrappers.keys() {
         let original = fs::read(layout.file(&format!("original-launch/{name}")))?;
         require(
-            hash(&original) == ORIGINAL_SHA,
+            hash(&original)
+                == if name == "emulationstation" {
+                    crate::home::ORIGINAL_SHA
+                } else {
+                    ORIGINAL_SHA
+                },
             "Original launcher backup differs",
         )?;
         changes.push(Change {
-            target: format!("usr/local/bin/{name}"),
+            target: wrapper_path(name),
             data: Some(original),
             mode: 0o755,
         });

@@ -324,8 +324,7 @@ fn live() -> Result<(), String> {
                     render::update(current_scene, &latest)?;
                     render::tick(&mut app)?;
                 } else {
-                    let next_scene = render::build(&mut app, &latest)?;
-                    render::tick(&mut app)?;
+                    let next_scene = render::draw(&mut app, &latest)?;
                     scene = Some(next_scene);
                 }
                 metrics.record(frame_start, full);
@@ -392,7 +391,7 @@ fn live() -> Result<(), String> {
 }
 
 #[cfg(all(target_os = "linux", feature = "gpu"))]
-fn gpu_probe(output: &Path) -> Result<(), String> {
+fn gpu_probe(output: &Path, input: Option<&Path>) -> Result<(), String> {
     use mirui::surface::sdl_gpu::{
         SdlGpuConfig, SdlGpuDriver, SdlGpuFactory, SdlGpuSurface, SdlWindowMode,
     };
@@ -414,9 +413,14 @@ fn gpu_probe(output: &Path) -> Result<(), String> {
     let mut app = App::with_factory(surface, SdlGpuFactory::new());
     app.with_default_widgets().with_default_systems();
     render::install(&mut app)?;
-    let view = model::View {
-        page: model::Page::Mode,
-        ..Default::default()
+    let view = if let Some(input) = input {
+        serde_json::from_reader(File::open(input).map_err(|e| e.to_string())?)
+            .map_err(|e| e.to_string())?
+    } else {
+        model::View {
+            page: model::Page::Mode,
+            ..Default::default()
+        }
     };
     let start = std::time::Instant::now();
     let _scene = render::build(&mut app, &view)?;
@@ -465,7 +469,11 @@ fn run() -> Result<(), String> {
             Ok(())
         }
         #[cfg(all(target_os = "linux", feature = "gpu"))]
-        [mode, output] if mode == "--gpu-probe" => gpu_probe(Path::new(output)),
+        [mode, output] if mode == "--gpu-probe" => gpu_probe(Path::new(output), None),
+        #[cfg(all(target_os = "linux", feature = "gpu"))]
+        [mode, input, output] if mode == "--gpu-probe" => {
+            gpu_probe(Path::new(output), Some(Path::new(input)))
+        }
         #[cfg(all(target_os = "linux", feature = "sound"))]
         [argument] if argument == "--audio-probe" => sound::probe(),
         [mode, input, output] if mode == "--snapshot" => {

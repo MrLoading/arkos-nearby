@@ -9,6 +9,8 @@ use crate::system::monotonic;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Page {
+    Lobby,
+    Candidates,
     Mode,
     Choice,
     Host,
@@ -20,6 +22,8 @@ pub enum Page {
 impl Page {
     pub fn name(self) -> &'static str {
         match self {
+            Self::Lobby => "lobby",
+            Self::Candidates => "candidates",
             Self::Mode => "mode",
             Self::Choice => "choice",
             Self::Host => "host",
@@ -33,6 +37,7 @@ impl Page {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Operation {
+    SelectGame,
     Detach,
     Create,
     Join,
@@ -43,6 +48,7 @@ pub enum Operation {
 impl Operation {
     pub fn name(self) -> &'static str {
         match self {
+            Self::SelectGame => "select_game",
             Self::Detach => "detach",
             Self::Create => "create",
             Self::Join => "join",
@@ -67,12 +73,15 @@ struct Record {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FlowExit {
+    CurrentGame,
     NetworkOnly,
     SelectGame,
     KeepNetwork,
 }
 
 pub struct Flow {
+    lobby: bool,
+    candidate: usize,
     pub outcome: Option<FlowExit>,
     network_only: bool,
     pub context: Option<Context>,
@@ -140,6 +149,8 @@ impl Flow {
         };
         let unavailable = "暂时无法核对当前游戏，按 B 继续单机。";
         Self {
+            lobby: false,
+            candidate: 0,
             outcome: None,
             network_only: false,
             context,
@@ -179,6 +190,27 @@ impl Flow {
         flow.message = "请选择仅组网或选择游戏。".into();
         flow
     }
+    pub fn lobby(context: Option<Context>, connected: bool) -> Self {
+        let mut flow = Self::new(context);
+        flow.lobby = true;
+        flow.single_player = false;
+        flow.set_page(if connected { Page::Lobby } else { Page::Mode });
+        flow.message = "选择附近房间，或向下创建自己的房间。".into();
+        flow
+    }
+    pub fn scans(&self) -> bool {
+        matches!(self.page, Page::Rooms | Page::Lobby) || self.lobby && self.page == Page::Mode
+    }
+    pub fn resume_lobby(&mut self) {
+        self.outcome = None;
+        self.exit_code = None;
+        self.network_only = false;
+        self.set_page(Page::Lobby);
+        self.refresh_requested = true;
+    }
+    fn entry_page(&self) -> bool {
+        self.page == Page::Choice || self.lobby && matches!(self.page, Page::Lobby | Page::Mode)
+    }
     pub fn network() -> Self {
         let mut flow = Self::new(None);
         flow.network_only = true;
@@ -198,12 +230,12 @@ impl Flow {
         self.generation += 1;
         self.input_epoch = monotonic();
         self.scanning = None;
-        self.refreshing_until = if page == Page::Rooms {
+        self.refreshing_until = if matches!(page, Page::Rooms | Page::Lobby) {
             monotonic() + 3.0
         } else {
             0.0
         };
-        self.refresh_requested = page == Page::Rooms;
+        self.refresh_requested = matches!(page, Page::Rooms | Page::Lobby);
     }
     fn order(&self) -> Vec<String> {
         let mut ids: Vec<_> = self.rooms.keys().cloned().collect();
@@ -230,6 +262,9 @@ impl Flow {
         ) {
             payload = json!({"session_id": self.session_id});
         }
+        if operation == Operation::SelectGame {
+            payload["session_id"] = json!(self.session_id);
+        }
         if matches!(operation, Operation::Create | Operation::Join) {
             self.state = json!({"phase":"starting","role":if operation == Operation::Create { "host" } else { "client" },"ready":false});
             self.session_id = None;
@@ -237,6 +272,7 @@ impl Flow {
             self.peer_left = false;
         }
         self.phase = match operation {
+            Operation::SelectGame => "checking",
             Operation::Detach => "network_connected",
             Operation::Create => "creating",
             Operation::Join => "connecting",
@@ -246,6 +282,7 @@ impl Flow {
         }
         .into();
         self.message = match operation {
+            Operation::SelectGame => "正在准备所选游戏...",
             Operation::Create => "正在创建当前游戏的房间...",
             Operation::Join => "正在加入所选房间并核对游戏...",
             Operation::Start => "正在开始游戏...",
@@ -274,6 +311,9 @@ impl Flow {
         self.phase = "idle".into();
         self.peer_seen = false;
         self.peer_left = false;
+        if self.lobby {
+            self.network_only = false;
+        }
         if let Some(page) = destination {
             self.set_page(page);
             self.message = if page == Page::Rooms {
@@ -300,8 +340,11 @@ impl Flow {
             return;
         }
         let destination = match self.page {
+            Page::Lobby => None,
+            Page::Mode if self.lobby => Some(Page::Lobby),
+            Page::Joined | Page::Candidates if self.lobby => Some(Page::Lobby),
             Page::Choice | Page::Mode => None,
-            Page::Joined => Some(Page::Rooms),
+            Page::Joined | Page::Candidates => Some(Page::Rooms),
             _ => Some(Page::Choice),
         };
         self.pending_back = Some(destination);
@@ -336,7 +379,7 @@ impl Flow {
             return;
         }
         if action == "refresh" {
-            if self.page == Page::Rooms && self.operation.is_none() {
+            if self.scans() && self.operation.is_none() {
                 self.refresh_requested = true;
                 self.scanning = None;
                 self.refreshing_until = monotonic() + 3.0;
@@ -347,6 +390,49 @@ impl Flow {
         if self.operation.is_some() || self.page == Page::Unavailable {
             return;
         }
+        if self.lobby && self.page == Page::Mode && matches!(action, "up" | "page_up") {
+            if action == "up" && self.choice == 2 {
+                self.choice = 0;
+                return;
+            }
+            self.set_page(Page::Lobby);
+            return;
+        }
+        if self.lobby && self.page == Page::Mode && self.context.is_some() && action == "down" {
+            self.choice = 2;
+            return;
+        }
+        if self.page == Page::Lobby
+            && (action == "page_down"
+                || action == "down" && self.order().last() == self.selected.as_ref())
+        {
+            self.set_page(Page::Mode);
+            return;
+        }
+        if self.page == Page::Candidates {
+            let candidates = self.state["candidates"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default();
+            match action {
+                "up" => self.candidate = self.candidate.saturating_sub(1),
+                "down" => {
+                    self.candidate = (self.candidate + 1).min(candidates.len().saturating_sub(1))
+                }
+                "confirm" => {
+                    if let Some(candidate) = candidates
+                        .get(self.candidate)
+                        .filter(|candidate| candidate["available"] == true)
+                    {
+                        let key = candidate["key"].clone();
+                        self.set_page(Page::Joined);
+                        self.begin(Operation::SelectGame, json!({"key":key}));
+                    }
+                }
+                _ => {}
+            }
+            return;
+        }
         let direction = match action {
             "up" | "left" | "page_up" => -1,
             "down" | "right" | "page_down" => 1,
@@ -355,8 +441,15 @@ impl Flow {
         };
         if direction != 0 {
             if matches!(self.page, Page::Choice | Page::Mode) {
-                self.choice = (self.choice as i32 + direction).clamp(0, 1) as usize;
-            } else if self.page == Page::Rooms && !self.rooms.is_empty() {
+                self.choice = (self.choice as i32 + direction).clamp(
+                    0,
+                    if self.lobby && self.context.is_some() {
+                        2
+                    } else {
+                        1
+                    },
+                ) as usize;
+            } else if self.scans() && !self.rooms.is_empty() {
                 let ids = self.order();
                 let index = ids
                     .iter()
@@ -380,7 +473,9 @@ impl Flow {
         }
         match self.page {
             Page::Mode => {
-                self.outcome = Some(if self.choice == 0 {
+                self.outcome = Some(if self.choice == 2 {
+                    FlowExit::CurrentGame
+                } else if self.choice == 0 {
                     FlowExit::NetworkOnly
                 } else {
                     FlowExit::SelectGame
@@ -409,7 +504,7 @@ impl Flow {
             Page::Host if truth(&self.state, "ready") && self.state["context_matches"] != false => {
                 self.begin(Operation::Start, json!({}))
             }
-            Page::Rooms => {
+            Page::Rooms | Page::Lobby => {
                 let room = self.selected.as_ref().and_then(|id| self.rooms.get(id));
                 if let Some(record) = room.filter(|record| record.available) {
                     let room = record.room.clone();
@@ -425,7 +520,7 @@ impl Flow {
         }
     }
     pub fn scan(&mut self, generation: u64, result: Value) {
-        if generation != self.generation || self.page != Page::Rooms {
+        if generation != self.generation || !self.scans() {
             return;
         }
         let now = monotonic();
@@ -482,13 +577,17 @@ impl Flow {
         let id = string(&value, "id").to_owned();
         let backend_phase = string(&value, "phase");
         if backend_phase == "restoring"
-            && self.page == Page::Choice
+            && self.entry_page()
             && self.session_id.is_none()
             && self.operation.is_none()
             && hex(&id, 32)
         {
             self.session_id = Some(id.clone());
-            self.pending_back = Some(Some(Page::Choice));
+            self.pending_back = Some(Some(if self.lobby {
+                Page::Lobby
+            } else {
+                Page::Choice
+            }));
             self.set_page(Page::Leaving);
         }
         if self.pending_back.is_some() && self.session_id.as_deref() == Some(&id) {
@@ -507,12 +606,16 @@ impl Flow {
         if value["context_matches"] == false {
             if self.session_id.is_none()
                 && self.operation.is_none()
-                && self.page == Page::Choice
+                && self.entry_page()
                 && !matches!(backend_phase, "idle" | "closed")
                 && hex(&id, 32)
             {
                 self.session_id = Some(id);
-                self.pending_back = Some(Some(Page::Choice));
+                self.pending_back = Some(Some(if self.lobby {
+                    Page::Lobby
+                } else {
+                    Page::Choice
+                }));
                 self.set_page(Page::Leaving);
                 self.phase = if backend_phase == "restoring" {
                     "leaving"
@@ -534,7 +637,7 @@ impl Flow {
         }
         if self.session_id.is_none() {
             if self.operation.is_some()
-                || self.page != Page::Choice
+                || !self.entry_page()
                 || matches!(backend_phase, "idle" | "closed")
                 || backend_phase == "failed" && !errors(&value)
                 || !hex(&id, 32)
@@ -554,6 +657,9 @@ impl Flow {
             return;
         }
         self.state = value;
+        if self.state["network_only"].is_boolean() {
+            self.network_only = truth(&self.state, "network_only");
+        }
         if self.pending_back.is_some() {
             if self.operation.is_none() && self.restored() {
                 self.finish_leave();
@@ -569,11 +675,15 @@ impl Flow {
         }
         .into();
         if self.phase == "restore_failed" {
-            self.pending_back = Some(Some(if self.page == Page::Joined {
-                Page::Rooms
-            } else {
-                Page::Choice
-            }));
+            self.pending_back = Some(Some(
+                if matches!(self.page, Page::Joined | Page::Candidates) {
+                    if self.lobby { Page::Lobby } else { Page::Rooms }
+                } else if self.lobby {
+                    Page::Lobby
+                } else {
+                    Page::Choice
+                },
+            ));
             self.join_authorized = false;
             self.set_page(Page::Leaving);
             self.message = "原网络尚未恢复，按 A 重试退出。".into();
@@ -586,6 +696,14 @@ impl Flow {
             self.peer_left = true;
         }
         self.message = string(&self.state, "stage").into();
+        if self.phase == "selecting_game" && self.page == Page::Joined && self.operation.is_none() {
+            self.candidate = 0;
+            self.set_page(Page::Candidates);
+        } else if self.page == Page::Candidates
+            && !matches!(self.phase.as_str(), "selecting_game" | "resolving_game")
+        {
+            self.set_page(Page::Joined);
+        }
         if self.phase == "host_ready" {
             self.message = "对方已准备好，按 A 开始游戏。".into();
         } else if self.peer_left && self.phase == "waiting_peer" {
@@ -652,13 +770,39 @@ impl Flow {
         }
     }
     pub fn view(&self) -> Value {
+        let joined_game = self.session_id.is_some() && !self.network_only;
+        let title = if self.network_only {
+            "仅组网".into()
+        } else if joined_game && self.state["game_title"].is_string() {
+            label(string(&self.state, "game_title"))
+        } else {
+            self.context
+                .as_ref()
+                .map(|context| label(&context.title))
+                .unwrap_or_else(|| "附近的掌机".into())
+        };
+        let core = if joined_game && self.state["game_core"].is_string() {
+            label(string(&self.state, "game_core"))
+        } else {
+            self.context
+                .as_ref()
+                .map(|context| {
+                    format!(
+                        "{} {}",
+                        context.identity.core.name, context.identity.core.version
+                    )
+                })
+                .unwrap_or_default()
+        };
         let ids = self.order();
-        let rows: Vec<_> = if self.page == Page::Rooms {
-            ids.iter().map(|id| { let record = &self.rooms[id]; json!({"key":format!("{:x}", Sha256::digest(id.as_bytes())),"name":room_name(&record.room),"detail":if self.network_only { "仅组网房间" } else if truth(&record.room,"same_game_hint") { "同一游戏，可以加入" } else { "其他游戏的房间" },"signal":record.room["signal"].as_i64().unwrap_or(0).clamp(0,100),"available":record.available}) }).collect()
+        let rows: Vec<_> = if self.scans() {
+            ids.iter().map(|id| { let record = &self.rooms[id]; json!({"key":format!("{:x}", Sha256::digest(id.as_bytes())),"name":room_name(&record.room),"detail":if string(&record.room,"ssid").starts_with("DIRECT-NW-") { "仅组网 · 保持局域网连接" } else if truth(&record.room,"same_game_hint") { "当前游戏 · 加入后核对" } else { "游戏房间 · 加入后查找本地游戏" },"signal":record.room["signal"].as_i64().unwrap_or(0).clamp(0,100),"available":record.available}) }).collect()
         } else {
             vec![]
         };
-        let selected = if matches!(self.page, Page::Choice | Page::Mode) {
+        let selected = if self.page == Page::Candidates {
+            self.candidate.min(3)
+        } else if matches!(self.page, Page::Choice | Page::Mode) {
             self.choice
         } else {
             ids.iter()
@@ -670,7 +814,13 @@ impl Flow {
         } else {
             &self.state["room"]
         };
-        let back = if self.network_only && self.phase == "network_connected" {
+        let back = if self.page == Page::Lobby {
+            if self.context.is_some() {
+                "单机游玩"
+            } else {
+                "退出"
+            }
+        } else if self.network_only && self.phase == "network_connected" {
             "断开并恢复 Wi-Fi"
         } else if self.page == Page::Mode || self.network_only && self.page == Page::Choice {
             "返回"
@@ -697,6 +847,6 @@ impl Flow {
         } else {
             "取消加入"
         };
-        json!({"network_only":self.network_only,"local_address":self.state["local_address"].as_str().unwrap_or(""),"peers":self.state["peers"].as_array().cloned().unwrap_or_default(),"connected":truth(&self.state,"connected"),"page":self.page.name(),"title":self.context.as_ref().map(|c|label(&c.title)).unwrap_or_else(||if self.network_only { "仅组网".into() } else { "当前游戏".into() }),"core":self.context.as_ref().map(|c|format!("{} {}",c.identity.core.name,c.identity.core.version)).unwrap_or_default(),"selected":selected,"rooms":rows,"room_name":if room.is_null() { String::new() } else { room_name(room) },"ready":truth(&self.state,"ready") && self.state["context_matches"] != false && self.pending_back.is_none() && matches!(self.phase.as_str(),"host_ready"|"waiting_start"|"starting"),"busy":self.operation.is_some(),"refreshing":self.page == Page::Rooms && self.scanning.unwrap_or(monotonic()<self.refreshing_until),"status":label(&self.message),"phase":self.phase,"back_label":back})
+        json!({"lobby":self.lobby,"current_game":self.context.is_some(),"entries":if self.page == Page::Candidates { self.state["candidates"].as_array().cloned().unwrap_or_default().into_iter().skip(self.candidate.saturating_sub(3)).take(4).collect::<Vec<_>>() } else { vec![] },"network_only":self.network_only,"local_address":self.state["local_address"].as_str().unwrap_or(""),"peers":self.state["peers"].as_array().cloned().unwrap_or_default(),"connected":truth(&self.state,"connected"),"page":self.page.name(),"title":title,"core":core,"selected":selected,"room_selected":ids.iter().position(|id| Some(id) == self.selected.as_ref()),"rooms":rows,"room_name":if room.is_null() { String::new() } else { room_name(room) },"ready":truth(&self.state,"ready") && self.state["context_matches"] != false && self.pending_back.is_none() && matches!(self.phase.as_str(),"host_ready"|"waiting_start"|"starting"),"busy":self.operation.is_some(),"refreshing":self.scans() && self.scanning.unwrap_or(monotonic()<self.refreshing_until),"status":label(&self.message),"phase":self.phase,"back_label":back})
     }
 }

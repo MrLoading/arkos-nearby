@@ -24,6 +24,8 @@ pub const ALLOWED: &[&str] = &[
     "assets/build.json",
     "assets/netplay-compression.so",
     "assets/netplay-compression-build.json",
+    "assets/home-input.so",
+    "assets/home-input-build.json",
     "core-inspect-build.json",
     "nearby-gui-build.json",
     "font/OFL.txt",

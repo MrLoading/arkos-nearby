@@ -54,6 +54,19 @@ fn run(args: &[String]) -> Result<i32> {
             Ok(if facts.problems().is_empty() { 0 } else { 2 })
         }
         Some("manual") => arkos_nearby::manual::run_manual(),
+        Some("home-listen" | "home-open") if args.len() == 2 => {
+            let pid = args[1].parse::<u32>()?;
+            if args[0] == "home-listen" {
+                arkos_nearby::home::listen(pid)?;
+            } else {
+                arkos_nearby::home::open(pid)?;
+            }
+            Ok(0)
+        }
+        Some("home-resume") if args.len() == 1 => {
+            arkos_nearby::home::resume()?;
+            Ok(0)
+        }
         Some("network") if (2..=3).contains(&args.len()) => {
             let payload = args
                 .get(2)
