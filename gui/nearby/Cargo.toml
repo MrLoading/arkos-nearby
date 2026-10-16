@@ -23,3 +23,7 @@ signal-hook = "0.3"
 opt-level = 3
 strip = true
 lto = "thin"
+
+[[example]]
+name = "dual_demo"
+path = "src/dual_demo.rs"

@@ -54,6 +54,18 @@ python3 scripts/build_nearby_gui.py snapshot --view docs/screenshots/views/room-
 
 截图使用相同的场景和字体渲染代码，输入仅包含显示状态。`docs/screenshots/views/` 保存 README 截图所用的示例状态。
 
+## 双机演示动画
+
+`dual_demo` 使用 mirui 渲染掌机外壳、镜头变换和两个独立的菜单场景。分镜包括创建房间、搜索加入、房主确认、双机就绪、仅组网和主题切换。菜单页面复用应用的布局和动效；演示节奏经过编排。
+
+安装 FFmpeg 和 libwebp 的 img2webp 工具后，执行以下命令生成 840×585、25 fps、20 秒循环 WebP：
+
+```sh
+python3 gui/nearby/examples/dual_demo/export.py --output /tmp/nearby-dual-demo.webp
+```
+
+Cargo 产物沿用 GUI 的外部缓存目录，1120×780 PNG 帧默认保存到 `/tmp/arkos-nearby-demo-frames`。`--frames` 指定帧目录，`--width` 设置成品宽度，`--quality` 设置编码质量，默认 75；`--lossless` 使用无损编码，`--reuse-frames` 复用已有帧进行编码。`gui/nearby/examples/dual_demo/story.rs` 定义分镜与镜头，`scene.rs` 定义宣传画面，`gui/nearby/src/dual_demo.rs` 负责逐帧渲染和导出。
+
 ## 核心查询器
 
 发布资产带有 32/64 位核心查询器。重新构建需要 `native/core_inspect/runtime-pins.json` 中匹配的 ABI 库和 clang，执行 `python3 scripts/build_core_inspect.py build --libraries /path/to/pinned-libraries --output build/assets`。查询器用于读取核心元数据。

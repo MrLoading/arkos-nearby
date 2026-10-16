@@ -10,7 +10,7 @@
 
 [下载安装](https://github.com/W-Mai/arkos-nearby/releases/tag/v0.5.1) · [使用说明](docs/installation.md) · [游戏兼容性](docs/compatibility.md) · [源码构建](docs/building.md)
 
-<img src="docs/photos/room-ready.jpg" alt="两台 R36S 准备开始游戏" width="840" />
+<img src="docs/assets/nearby-dual-demo.webp" alt="双机联机界面演示：创建房间、搜索加入、确认就绪与主题切换" width="840" />
 
 </div>
 
@@ -60,6 +60,11 @@ ArkOS Nearby 用 Wi-Fi Direct 连接两台 R36S。中文图形界面支持手柄
 </div>
 
 ## 双机实拍
+
+<div align="center">
+  <img src="docs/photos/room-ready.jpg" alt="两台 R36S 准备开始游戏" width="840" />
+  <p><sub>双方就绪，等待开始游戏</sub></p>
+</div>
 
 <table>
   <tr><td align="center"><b>搜索房间</b></td><td align="center"><b>坦克大战</b></td></tr>
