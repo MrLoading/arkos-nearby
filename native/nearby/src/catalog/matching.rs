@@ -118,6 +118,10 @@ pub(crate) fn resolve(
     }
 }
 
+pub(super) fn inventory() -> Result<Vec<super::Entry>> {
+    Ok(super::IndexJob::local()?.run().entries().cloned().collect())
+}
+
 fn find(state: &State, room: &VerifiedRoom, profile: &Profile) -> Result<Vec<Candidate>> {
     let library = context::resolve_core(&profile.frontend, &profile.core_id)
         .map_err(|_| "本机缺少房间使用的核心")?;
@@ -130,20 +134,16 @@ fn find(state: &State, room: &VerifiedRoom, profile: &Profile) -> Result<Vec<Can
         .iter()
         .filter_map(|root| PathBuf::from(root).canonicalize().ok())
         .collect();
-    let mut paths = Vec::new();
-    let mut metadata = std::collections::BTreeMap::new();
-    for root in &roots {
-        for (platform, _) in super::PLATFORMS {
-            check(state)?;
-            let directory = root.join(platform);
-            // The inspected core decides which content it can interpret. Core-choice
-            // preferences only affect creation and cannot restrict client discovery.
-            paths.extend(super::metadata::files(&directory, &roots));
-            metadata.extend(super::metadata::read(&directory, &roots));
-        }
-    }
-    paths.sort();
-    paths.dedup();
+    check(state)?;
+    // Inventory includes platform folders without an installed default core.
+    // The verified room core alone determines content compatibility below.
+    let entries = inventory()?;
+    check(state)?;
+    let metadata: std::collections::BTreeMap<_, _> = entries
+        .iter()
+        .map(|entry| (entry.path.clone(), entry))
+        .collect();
+    let mut paths: Vec<_> = metadata.keys().cloned().collect();
     let title = room.room().content.title.to_lowercase();
     paths.sort_by_key(|path| {
         let filename_matches = path

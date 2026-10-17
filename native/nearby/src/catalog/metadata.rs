@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -54,49 +54,12 @@ pub(super) fn read(directory: &Path, roots: &[PathBuf]) -> BTreeMap<PathBuf, Met
     result.unwrap_or_default()
 }
 
-/// Enumerate unique files under one platform, retaining confinement across symlinks.
-pub(super) fn files(directory: &Path, roots: &[PathBuf]) -> Vec<PathBuf> {
-    let mut pending = vec![directory.to_path_buf()];
-    let mut visited = BTreeSet::new();
-    let mut files = BTreeSet::new();
-    while let Some(directory) = pending.pop() {
-        let Ok(directory) = directory.canonicalize() else {
-            continue;
-        };
-        if !roots.iter().any(|root| directory.starts_with(root))
-            || !visited.insert(directory.clone())
-        {
-            continue;
-        }
-        let Ok(children) = fs::read_dir(directory) else {
-            continue;
-        };
-        for child in children.flatten() {
-            let Ok(path) = child.path().canonicalize() else {
-                continue;
-            };
-            if !roots.iter().any(|root| path.starts_with(root)) {
-                continue;
-            }
-            if path.is_dir() {
-                pending.push(path);
-            } else if super::game_file(&path) {
-                files.insert(path);
-            }
-            if visited.len() + files.len() >= MAX_RECORDS {
-                return files.into_iter().collect();
-            }
-        }
-    }
-    files.into_iter().collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn metadata_and_enumeration_share_local_confinement() {
+    fn metadata_paths_retain_local_confinement() {
         let root = std::env::temp_dir().join(format!("nearby-catalog-{}", std::process::id()));
         fs::create_dir_all(root.join("nested")).unwrap();
         fs::write(root.join("nested/game.nes"), b"test").unwrap();
@@ -109,7 +72,6 @@ mod tests {
         let metadata = entries.get(&root.join("nested/game.nes")).unwrap();
         assert_eq!(metadata.name, "Game & Friend");
         assert_eq!(metadata.image, Some(root.join("picture.png")));
-        assert_eq!(files(&root, &roots), vec![root.join("nested/game.nes")]);
         fs::remove_dir_all(root).unwrap();
     }
 }

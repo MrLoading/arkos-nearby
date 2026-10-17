@@ -1,6 +1,90 @@
 use super::*;
 
 #[test]
+fn game_row_routes_replace_contents_and_retain_them_only_on_departure() {
+    for initial_page in [Page::Lobby, Page::Games] {
+        let mut app = app([640, 480]);
+        let mut scene = draw(&mut app, &view(initial_page)).unwrap();
+        for page in [Page::Candidates, Page::Games, Page::Candidates] {
+            let mut current = view(page);
+            current.entries.clear();
+            update(&mut scene, &current).unwrap();
+            assert!(
+                scene.state.entries().is_empty(),
+                "Empty {page:?} clears old rows"
+            );
+
+            current.entries = view(page).entries;
+            current.entries.truncate(2);
+            current.entries[0].name = format!("{page:?} candidate");
+            update(&mut scene, &current).unwrap();
+            let labels = || {
+                scene
+                    .state
+                    .entries()
+                    .entries()
+                    .map(|(_, row)| row.label(true))
+                    .collect::<Vec<_>>()
+            };
+            assert_eq!(
+                labels(),
+                current
+                    .entries
+                    .iter()
+                    .map(|row| row.name.clone())
+                    .collect::<Vec<_>>()
+            );
+            let identities: Vec<_> = scene.state.entries().entries().map(|(id, _)| id).collect();
+            current.entries[0].detail = "Matching completed".into();
+            current.entries[0].available = true;
+            current.selected = 1;
+            update(&mut scene, &current).unwrap();
+            assert_eq!(
+                scene
+                    .state
+                    .entries()
+                    .entries()
+                    .map(|(id, _)| id)
+                    .collect::<Vec<_>>(),
+                identities,
+                "Background updates preserve row identities"
+            );
+            assert_eq!(scene.state.selected(), Some(1));
+            assert_eq!(
+                scene
+                    .state
+                    .entries()
+                    .entries()
+                    .next()
+                    .unwrap()
+                    .1
+                    .label(false),
+                "Matching completed"
+            );
+            paint_at(&mut app, &scene, now_ns() / 1_000_000 + 1000);
+            assert!(
+                focus_rect(&app).is_some(),
+                "Rows have a focus target in {page:?}"
+            );
+
+            update(
+                &mut scene,
+                &View {
+                    page: Page::Rooms,
+                    ..View::default()
+                },
+            )
+            .unwrap();
+            assert_eq!(
+                scene.state.entries().entries().len(),
+                2,
+                "Departure retains rows"
+            );
+        }
+    }
+}
+
+#[test]
 fn library_content_is_owned_by_its_route_during_page_departure() {
     for kind in [
         crate::model::LibraryKind::Platforms,

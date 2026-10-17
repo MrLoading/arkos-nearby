@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-10-17
+
+- Show cached game previews immediately and preload adjacent game artwork.
+
+- Speed up game library browsing, searches and local game matching when joining rooms.
+
+- Show matching local games when joining a room directly and replace stale library rows with current matches.
+
 ## [0.8.0] - 2026-10-17
 
 - Preserve game library contents while returning to the previous page.

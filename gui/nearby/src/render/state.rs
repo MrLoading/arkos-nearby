@@ -30,6 +30,7 @@ struct LibraryPresentation {
     selected: usize,
     platforms: bool,
     artwork: String,
+    artwork_neighbors: Vec<String>,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -209,33 +210,33 @@ impl DisplayState {
             self.row_revision = self.row_revision.wrapping_add(1);
             rows::reconcile(&mut self.rooms, rows, self.row_revision);
         }
-        // An outgoing library remains mounted throughout the page transition.
-        // Other routes must not replace its content with their empty defaults.
-        if view.page == Page::Games
-            && self
+        // Both game-row routes own this collection. Retain it only when leaving
+        // for another route whose empty defaults do not describe game rows.
+        if matches!(view.page, Page::Games | Page::Candidates) {
+            if self
                 .library
                 .entries
                 .iter()
                 .take(4)
                 .ne(view.entries.iter().take(4))
-        {
-            self.row_revision = self.row_revision.wrapping_add(1);
-            let entries = view
-                .entries
-                .iter()
-                .take(4)
-                .enumerate()
-                .map(|(i, row)| Row::game(i, row))
-                .collect();
-            rows::reconcile(&mut self.entries, entries, self.row_revision);
-        }
-        if view.page == Page::Games {
+            {
+                self.row_revision = self.row_revision.wrapping_add(1);
+                let entries = view
+                    .entries
+                    .iter()
+                    .take(4)
+                    .enumerate()
+                    .map(|(i, row)| Row::game(i, row))
+                    .collect();
+                rows::reconcile(&mut self.entries, entries, self.row_revision);
+            }
             self.library = LibraryPresentation {
                 entries: view.entries.iter().take(4).cloned().collect(),
                 detail: view.library.clone(),
                 selected: view.selected,
                 platforms: view.platforms,
                 artwork: view.artwork.clone(),
+                artwork_neighbors: view.artwork_neighbors.iter().take(2).cloned().collect(),
             };
         }
         let mut devices = vec![crate::model::NetworkPeer {
@@ -389,6 +390,10 @@ impl DisplayState {
 
     pub(super) fn artwork(&self) -> String {
         self.library.artwork.clone()
+    }
+
+    pub(super) fn artwork_neighbors(&self) -> Vec<String> {
+        self.library.artwork_neighbors.clone()
     }
 
     #[observe]

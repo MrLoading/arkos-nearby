@@ -92,6 +92,11 @@ pub fn install_result(result: &serde_json::Value) -> Result<()> {
 pub fn run_manual() -> Result<i32> {
     session::identity(false)?;
     let mut menu = MenuSession::open()?;
+    std::thread::spawn(|| {
+        if let Ok(job) = crate::catalog::IndexJob::local() {
+            job.run();
+        }
+    });
     while let Some(mode) = menu.choose_mode()? {
         match mode {
             crate::flow::FlowExit::NetworkOnly => {

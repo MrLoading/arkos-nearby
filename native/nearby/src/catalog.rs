@@ -1,4 +1,3 @@
-use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -13,6 +12,7 @@ mod index;
 pub(crate) mod library;
 pub(crate) mod matching;
 mod metadata;
+mod store;
 pub use index::{Index, IndexJob, SearchJob, SearchResult};
 
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -32,6 +32,32 @@ mod library_tests {
     use super::*;
 
     #[test]
+    fn query_cache_follows_snapshot_identity_and_rejects_replaced_snapshots() {
+        let mut browser = Browser::new().unwrap();
+        let index = browser.index_job().run();
+        browser.indexed(index.clone());
+        browser.dispatch("auxiliary").unwrap();
+        browser.query = "bomber".into();
+        browser.changed_query();
+        let result = browser.search_job().unwrap().run();
+        browser.searched(result);
+        browser.indexed(index.clone());
+        assert!(browser.queries.get("bomber").is_some());
+        browser.query = "tank".into();
+        browser.changed_query();
+        let stale = browser.search_job().unwrap().run();
+        let replacement = Arc::new((*index).clone());
+        browser.indexed(replacement);
+        assert!(browser.queries.get("bomber").is_none());
+        browser.searched(stale);
+        assert!(browser.query_due.is_some());
+        let result = browser.search_job().unwrap().run();
+        browser.searched(result);
+        assert!(browser.query_due.is_none());
+        assert!(browser.queries.get("tank").is_some());
+    }
+
+    #[test]
     fn library_navigation_is_bounded_and_rejects_obsolete_search_results() {
         let mut browser = Browser::new().unwrap();
         browser.dispatch("auxiliary").unwrap();
@@ -49,7 +75,8 @@ mod library_tests {
         browser.dispatch("back").unwrap();
         assert!(browser.kind() == LibraryPage::Platforms);
         browser.searched(SearchResult {
-            entries: Vec::new(),
+            index: browser.index_job().run(),
+            ids: Arc::new(Vec::new()),
             query: "bomber".into(),
             epoch,
         });
@@ -122,8 +149,7 @@ pub struct Browser {
     pub exit: bool,
     pub selected_context: Option<Context>,
     status: String,
-    metadata: BTreeMap<PathBuf, metadata::Metadata>,
-    counts: BTreeMap<PathBuf, usize>,
+    inventory: IndexJob,
     pub indexing: bool,
     index: Option<Arc<Index>>,
     personal: library::Library,
@@ -186,6 +212,7 @@ fn game_file(path: &Path) -> bool {
 
 impl Browser {
     pub fn reopen(&mut self) {
+        self.indexing = true;
         self.input_epoch = crate::system::monotonic();
         self.search_running = false;
         self.exit = false;
@@ -200,65 +227,14 @@ impl Browser {
         }
     }
     pub fn new() -> Result<Self> {
-        let roots: Vec<_> = ["/roms", "/roms2"]
+        let inventory = IndexJob::local()?;
+        let roots = inventory.roots.clone();
+        let mut entries: Vec<_> = inventory
+            .platforms
             .iter()
-            .filter_map(|root| Path::new(root).canonicalize().ok())
+            .filter(|entry| !entry.core.is_empty())
+            .cloned()
             .collect();
-        let mut entries = Vec::new();
-        for root in &roots {
-            for (platform, name) in PLATFORMS {
-                let directory = root.join(platform);
-                let Ok(path) = directory.canonicalize() else {
-                    continue;
-                };
-                if !path.is_dir() || !roots.iter().any(|root| path.starts_with(root)) {
-                    continue;
-                }
-                let choice = if let Some(core) =
-                    crate::handheld_link::preferred(&directory.join("game.zip"))
-                {
-                    Some(("retroarch", core))
-                } else {
-                    crate::core_choice::candidates(&directory.join("game.zip"))
-                        .iter()
-                        .find(|choice| {
-                            context::config(choice.frontend).is_ok_and(|root| {
-                                root.join("cores")
-                                    .join(format!("{}_libretro.so", choice.id))
-                                    .is_file()
-                            })
-                        })
-                        .map(|choice| (choice.frontend, choice.id))
-                };
-                if let Some((frontend, core)) = choice {
-                    if !context::config(frontend)?
-                        .join("cores")
-                        .join(format!("{core}_libretro.so"))
-                        .is_file()
-                    {
-                        continue;
-                    }
-                    entries.push(Entry {
-                        path,
-                        name: format!(
-                            "{}{}",
-                            name,
-                            if root.ends_with("roms2") {
-                                " · 卡 2"
-                            } else {
-                                ""
-                            }
-                        ),
-                        directory: true,
-                        frontend: frontend.into(),
-                        core: core.into(),
-                        platform: (*platform).into(),
-                        count: 0,
-                        image: None,
-                    });
-                }
-            }
-        }
         let personal = library::Library::load(Path::new(context::INSTALL));
         let status = if personal.is_err() {
             "收藏记录无法读取，原文件已保留。".into()
@@ -292,8 +268,7 @@ impl Browser {
             exit: false,
             selected_context: None,
             status,
-            metadata: BTreeMap::new(),
-            counts: BTreeMap::new(),
+            inventory,
             indexing: true,
             index: None,
             personal: personal.unwrap_or_default(),
@@ -314,34 +289,40 @@ impl Browser {
     }
 
     pub fn index_job(&self) -> IndexJob {
-        IndexJob {
-            roots: self.roots.clone(),
-            platforms: self.levels[0]
-                .entries
-                .iter()
-                .filter(|entry| entry.platform != "favorites")
-                .cloned()
-                .map(|mut entry| {
-                    entry.count = 0;
-                    entry
-                })
-                .collect(),
-            cache: Path::new(context::INSTALL).join("catalog-index.json"),
-        }
+        let mut job = self.inventory.clone();
+        job.seed = self.index.clone();
+        job
     }
 
-    pub fn indexed(&mut self, index: Index) {
-        self.metadata = index.metadata.clone();
-        self.counts = index.counts.clone();
-        self.index = Some(Arc::new(index));
-        self.queries = index::Queries::default();
+    pub fn indexed(&mut self, index: Arc<Index>) {
         self.indexing = false;
+        if self
+            .index
+            .as_ref()
+            .is_some_and(|old| Arc::ptr_eq(old, &index))
+        {
+            return;
+        }
+        self.index = Some(index.clone());
+        self.queries = index::Queries::default();
         for level in &mut self.levels {
+            if let Some(directory) = &level.path {
+                if let Some(entries) = index.children(&directory.path) {
+                    let selected = level
+                        .entries
+                        .get(level.selected)
+                        .map(|entry| entry.path.clone());
+                    level.selected = selected
+                        .and_then(|path| entries.iter().position(|entry| entry.path == path))
+                        .unwrap_or(0);
+                    level.entries = entries;
+                }
+            }
             for entry in &mut level.entries {
-                if let Some(count) = self.counts.get(&entry.path) {
+                if let Some(count) = index.counts.get(&entry.path) {
                     entry.count = *count;
                 }
-                if let Some(metadata) = self.metadata.get(&entry.path) {
+                if let Some(metadata) = index.metadata.get(&entry.path) {
                     if !metadata.name.is_empty() {
                         entry.name = metadata.name.clone();
                     }
@@ -368,15 +349,19 @@ impl Browser {
         if self.kind() != LibraryPage::Search {
             return;
         }
-        if let Some(entries) = self.queries.get(&query) {
+        if query.is_empty() {
+            let level = self.levels.last_mut().expect("Browser root");
+            level.entries.clear();
+            level.selected = 0;
+            return;
+        }
+        if let Some(ids) = self.queries.get(&query) {
+            let entries = self.index.as_ref().expect("Query index").materialize(&ids);
             let level = self.levels.last_mut().expect("Browser root");
             level.entries = entries;
             level.selected = 0;
         } else {
-            let level = self.levels.last_mut().expect("Browser root");
-            level.entries.clear();
-            level.selected = 0;
-            self.query_due = Some(crate::system::monotonic() + 0.1);
+            self.query_due = Some(crate::system::monotonic());
         }
     }
 
@@ -396,17 +381,25 @@ impl Browser {
             index,
             query: self.query.trim().to_lowercase(),
             epoch: self.query_epoch,
+            candidates: self.queries.candidates(&self.query.trim().to_lowercase()),
         })
     }
 
     pub fn searched(&mut self, result: SearchResult) {
         self.search_running = false;
-        if result.epoch != self.query_epoch || self.kind() != LibraryPage::Search {
+        if result.epoch != self.query_epoch
+            || self.kind() != LibraryPage::Search
+            || self
+                .index
+                .as_ref()
+                .is_none_or(|index| !Arc::ptr_eq(index, &result.index))
+        {
             return;
         }
-        self.queries.put(result.query, result.entries.clone());
+        let entries = result.index.materialize(&result.ids);
+        self.queries.put(result.query, result.ids);
         let level = self.levels.last_mut().expect("Browser root");
-        level.entries = result.entries;
+        level.entries = entries;
         level.selected = 0;
     }
 
@@ -419,7 +412,7 @@ impl Browser {
         let mut entries: Vec<_> = self.personal.favorites.values().cloned().collect();
         if let Some(index) = &self.index {
             for entry in &mut entries {
-                if let Some(current) = index.entries().find(|current| current.path == entry.path) {
+                if let Some(current) = index.entry(&entry.path) {
                     *entry = current.clone();
                 }
             }
@@ -460,6 +453,13 @@ impl Browser {
     }
 
     fn children(&self, directory: &Entry) -> Result<Vec<Entry>> {
+        if let Some(entries) = self
+            .index
+            .as_ref()
+            .and_then(|index| index.children(&directory.path))
+        {
+            return Ok(entries);
+        }
         let mut entries: Vec<_> = fs::read_dir(&directory.path)?
             .filter_map(|entry| entry.ok())
             .filter_map(|entry| {
@@ -468,11 +468,20 @@ impl Browser {
                     || !(path.is_dir() || game_file(&path))
                     || path.is_dir()
                         && !self.indexing
-                        && self.counts.get(&path).copied().unwrap_or(0) == 0
+                        && self
+                            .index
+                            .as_ref()
+                            .and_then(|index| index.counts.get(&path))
+                            .copied()
+                            .unwrap_or(0)
+                            == 0
                 {
                     return None;
                 }
-                let metadata = self.metadata.get(&path);
+                let metadata = self
+                    .index
+                    .as_ref()
+                    .and_then(|index| index.metadata.get(&path));
                 let name = metadata
                     .filter(|value| !value.name.is_empty())
                     .map(|value| value.name.clone())
@@ -480,7 +489,12 @@ impl Browser {
                 if name.starts_with('.') {
                     return None;
                 }
-                let count = self.counts.get(&path).copied().unwrap_or(0);
+                let count = self
+                    .index
+                    .as_ref()
+                    .and_then(|index| index.counts.get(&path))
+                    .copied()
+                    .unwrap_or(0);
                 Some(Entry {
                     directory: path.is_dir(),
                     path,
@@ -581,6 +595,18 @@ impl Browser {
                 }
                 return Ok(None);
             }
+        }
+        if self.kind() == LibraryPage::Search
+            && self.query_due.is_some()
+            && matches!(action, "confirm" | "refresh")
+        {
+            return Ok(None);
+        }
+        if self.kind() == LibraryPage::Search
+            && self.search_running
+            && matches!(action, "confirm" | "refresh")
+        {
+            return Ok(None);
         }
         if action == "refresh" && self.kind() != LibraryPage::Platforms {
             if let Some(entry) = self
@@ -712,7 +738,7 @@ impl Browser {
             .min(level.entries.len().saturating_sub(visible));
         let entries: Vec<_> = level.entries.iter().skip(first).take(visible).map(|entry| {
             let detail = if entry.platform=="favorites" { format!("{} 款游戏",self.personal.favorites.len()) } else if entry.directory {
-                if self.indexing && !self.counts.contains_key(&entry.path) {
+                if self.indexing && self.index.as_ref().is_none_or(|index| !index.counts.contains_key(&entry.path)) {
                     format!("{} · 正在统计", entry.core)
                 } else {
                     format!("{} · {} 款游戏", entry.core, entry.count)
@@ -723,7 +749,7 @@ impl Browser {
             json!({
                 "key":if entry.platform=="favorites" {"favorites".into()} else {library::key(&entry.path)},
                 "favorite":self.personal.favorites.contains_key(&library::key(&entry.path)),
-                "available":entry.platform=="favorites" || self.available(entry),
+                "available":!(self.kind()==LibraryPage::Search && (self.query_due.is_some() || self.search_running)) && (entry.platform=="favorites" || self.available(entry)),
                 "name":entry.name,"detail":detail,"icon":entry.platform,"directory":entry.directory
             })
         }).collect();
@@ -763,10 +789,19 @@ impl Browser {
         } else {
             position
         };
+        let artwork_neighbors: Vec<_> =
+            [level.selected.checked_sub(1), level.selected.checked_add(1)]
+                .into_iter()
+                .flatten()
+                .filter_map(|i| level.entries.get(i))
+                .filter_map(|entry| entry.image.as_ref())
+                .map(|path| path.to_string_lossy().into_owned())
+                .collect();
         json!({
             "platforms":self.kind()==LibraryPage::Platforms,
             "library":{"kind":level.kind,"query":self.query,"keyboard":self.keyboard && self.kind()==LibraryPage::Search,"key_selected":self.key_selected,"row_selected":level.selected.saturating_sub(first),"sort":self.personal.favorite_sort},
             "artwork":level.entries.get(level.selected).and_then(|entry|entry.image.as_ref()).map(|path|path.to_string_lossy().into_owned()).unwrap_or_default(),
+            "artwork_neighbors":artwork_neighbors,
             "page":"games","title":match self.kind() {LibraryPage::Platforms=>"选择游戏平台",LibraryPage::Favorites=>"收藏夹",LibraryPage::Search=>"搜索游戏",LibraryPage::Directory=>"选择游戏"},
             "core":level.path.as_ref().map(|entry|entry.name.clone()).unwrap_or_else(||match self.kind() {LibraryPage::Favorites=>"喜欢的游戏，随时出发",LibraryPage::Search=>"查找本机游戏",_=>"本机游戏"}.into()),
             "selected":if self.keyboard && self.kind()==LibraryPage::Search {100+self.key_selected} else {level.selected.saturating_sub(first)},"entries":entries,"rooms":[],"room_name":"",
@@ -774,4 +809,66 @@ impl Browser {
             "back_label":if self.busy {"取消"} else if self.levels.len()==1 {"返回"} else {"上级"}
         })
     }
+}
+
+fn local_platforms() -> Result<(Vec<PathBuf>, Vec<Entry>)> {
+    let roots: Vec<_> = ["/roms", "/roms2"]
+        .iter()
+        .filter_map(|root| Path::new(root).canonicalize().ok())
+        .collect();
+    let mut entries = Vec::new();
+    for root in &roots {
+        for (platform, name) in PLATFORMS {
+            let directory = root.join(platform);
+            let Ok(path) = directory.canonicalize() else {
+                continue;
+            };
+            if !path.is_dir() || !roots.iter().any(|root| path.starts_with(root)) {
+                continue;
+            }
+            let choice =
+                if let Some(core) = crate::handheld_link::preferred(&directory.join("game.zip")) {
+                    Some(("retroarch", core))
+                } else {
+                    crate::core_choice::candidates(&directory.join("game.zip"))
+                        .iter()
+                        .find(|choice| {
+                            context::config(choice.frontend).is_ok_and(|root| {
+                                root.join("cores")
+                                    .join(format!("{}_libretro.so", choice.id))
+                                    .is_file()
+                            })
+                        })
+                        .map(|choice| (choice.frontend, choice.id))
+                };
+            let (frontend, core) = choice
+                .filter(|(frontend, core)| {
+                    context::config(frontend).is_ok_and(|root| {
+                        root.join("cores")
+                            .join(format!("{core}_libretro.so"))
+                            .is_file()
+                    })
+                })
+                .unwrap_or(("", ""));
+            entries.push(Entry {
+                path,
+                name: format!(
+                    "{}{}",
+                    name,
+                    if root.ends_with("roms2") {
+                        " · 卡 2"
+                    } else {
+                        ""
+                    }
+                ),
+                directory: true,
+                frontend: frontend.into(),
+                core: core.into(),
+                platform: (*platform).into(),
+                count: 0,
+                image: None,
+            });
+        }
+    }
+    Ok((roots, entries))
 }

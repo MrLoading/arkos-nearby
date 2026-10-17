@@ -69,6 +69,8 @@ pub struct View {
     #[serde(default)]
     pub artwork: String,
     #[serde(default)]
+    pub artwork_neighbors: Vec<String>,
+    #[serde(default)]
     pub network_only: bool,
     #[serde(default)]
     pub connected: bool,

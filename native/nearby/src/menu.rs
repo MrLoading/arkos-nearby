@@ -26,7 +26,7 @@ enum Event {
     Scan(u64, Value),
     Action(Request, Value, bool),
     Prepared(std::result::Result<Box<Context>, String>),
-    Indexed(crate::catalog::Index),
+    Indexed(Arc<crate::catalog::Index>),
     Searched(crate::catalog::SearchResult),
 }
 
