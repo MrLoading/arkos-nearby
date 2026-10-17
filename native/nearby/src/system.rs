@@ -1,5 +1,5 @@
 use std::fs::{self, File, OpenOptions};
-use std::io::{Read, Write};
+use std::io::{BufReader, Read, Write};
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::os::unix::process::CommandExt;
 use std::path::Path;
@@ -56,7 +56,7 @@ pub fn command(program: &str, args: &[&str], seconds: u64, check: bool) -> Resul
 }
 
 pub fn read<T: DeserializeOwned>(path: &Path) -> Result<T> {
-    Ok(serde_json::from_reader(File::open(path)?)?)
+    Ok(serde_json::from_reader(BufReader::new(File::open(path)?))?)
 }
 
 pub fn private_write(path: &Path, bytes: &[u8]) -> Result<()> {

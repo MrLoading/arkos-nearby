@@ -2,16 +2,20 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use sha2::{Digest, Sha256};
+use std::sync::Arc;
 
 use crate::context::{self, Context};
 use crate::{Result, require};
 
+mod index;
+pub(crate) mod library;
 pub(crate) mod matching;
 mod metadata;
+pub use index::{Index, IndexJob, SearchJob, SearchResult};
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Entry {
     path: PathBuf,
     name: String,
@@ -21,6 +25,54 @@ pub struct Entry {
     platform: String,
     count: usize,
     image: Option<PathBuf>,
+}
+
+#[cfg(test)]
+mod library_tests {
+    use super::*;
+
+    #[test]
+    fn library_navigation_is_bounded_and_rejects_obsolete_search_results() {
+        let mut browser = Browser::new().unwrap();
+        browser.dispatch("auxiliary").unwrap();
+        assert!(browser.kind() == LibraryPage::Search && browser.keyboard);
+        for _ in 0..50 {
+            browser.dispatch("left").unwrap();
+            browser.dispatch("up").unwrap();
+        }
+        assert!(browser.key_selected < KEYS.len());
+        browser.query = "bomber".into();
+        browser.changed_query();
+        let epoch = browser.query_epoch;
+        browser.dispatch("back").unwrap();
+        assert!(!browser.keyboard);
+        browser.dispatch("back").unwrap();
+        assert!(browser.kind() == LibraryPage::Platforms);
+        browser.searched(SearchResult {
+            entries: Vec::new(),
+            query: "bomber".into(),
+            epoch,
+        });
+        assert!(browser.kind() == LibraryPage::Platforms);
+        let entry = browser.levels[0].entries[0].clone();
+        for kind in [
+            LibraryPage::Platforms,
+            LibraryPage::Directory,
+            LibraryPage::Favorites,
+            LibraryPage::Search,
+        ] {
+            browser.levels = vec![Level {
+                kind,
+                path: None,
+                entries: vec![entry.clone(); 100],
+                selected: 99,
+            }];
+            let view = browser.view();
+            let entries = view["entries"].as_array().unwrap();
+            assert!(entries.len() <= 4);
+            assert!(view["selected"].as_u64().unwrap() < entries.len() as u64);
+        }
+    }
 }
 impl Entry {
     pub fn prepare(&self) -> Result<Context> {
@@ -38,7 +90,24 @@ impl Entry {
     }
 }
 
+#[derive(Clone, Copy, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum LibraryPage {
+    Platforms,
+    #[default]
+    Directory,
+    Favorites,
+    Search,
+}
+
+const KEYS: [&str; 40] = [
+    "Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P", "A", "S", "D", "F", "G", "H", "J", "K", "L",
+    "退格", "Z", "X", "C", "V", "B", "N", "M", "空格", "清空", "结果", "1", "2", "3", "4", "5",
+    "6", "7", "8", "9", "0",
+];
+
 struct Level {
+    kind: LibraryPage,
     path: Option<Entry>,
     entries: Vec<Entry>,
     selected: usize,
@@ -56,51 +125,15 @@ pub struct Browser {
     metadata: BTreeMap<PathBuf, metadata::Metadata>,
     counts: BTreeMap<PathBuf, usize>,
     pub indexing: bool,
-}
-
-pub struct Index {
-    metadata: BTreeMap<PathBuf, metadata::Metadata>,
-    counts: BTreeMap<PathBuf, usize>,
-}
-
-pub struct IndexJob {
-    roots: Vec<PathBuf>,
-    directories: Vec<PathBuf>,
-}
-
-impl IndexJob {
-    pub fn run(self) -> Index {
-        let mut index = Index {
-            metadata: BTreeMap::new(),
-            counts: BTreeMap::new(),
-        };
-        for path in self.directories {
-            index.metadata.extend(metadata::read(&path, &self.roots));
-            let files = metadata::files(&path, &self.roots);
-            index.counts.insert(path.clone(), files.len());
-            for file in &files {
-                for parent in file
-                    .ancestors()
-                    .skip(1)
-                    .take_while(|parent| *parent != path && parent.starts_with(&path))
-                {
-                    *index.counts.entry(parent.to_path_buf()).or_default() += 1;
-                }
-            }
-            let nested: Vec<_> = index
-                .counts
-                .keys()
-                .filter(|directory| directory.starts_with(&path) && **directory != path)
-                .cloned()
-                .collect();
-            for directory in nested {
-                index
-                    .metadata
-                    .extend(metadata::read(&directory, &self.roots));
-            }
-        }
-        index
-    }
+    index: Option<Arc<Index>>,
+    personal: library::Library,
+    queries: index::Queries,
+    query: String,
+    keyboard: bool,
+    key_selected: usize,
+    query_epoch: u64,
+    query_due: Option<f64>,
+    search_running: bool,
 }
 
 const PLATFORMS: &[(&str, &str)] = &[
@@ -152,6 +185,20 @@ fn game_file(path: &Path) -> bool {
 }
 
 impl Browser {
+    pub fn reopen(&mut self) {
+        self.input_epoch = crate::system::monotonic();
+        self.search_running = false;
+        self.exit = false;
+        if let Ok(personal) = library::Library::load(Path::new(context::INSTALL)) {
+            self.personal = personal;
+        }
+        if self.kind() == LibraryPage::Favorites {
+            self.favorites();
+        }
+        if self.kind() == LibraryPage::Search {
+            self.changed_query();
+        }
+    }
     pub fn new() -> Result<Self> {
         let roots: Vec<_> = ["/roms", "/roms2"]
             .iter()
@@ -212,9 +259,29 @@ impl Browser {
                 }
             }
         }
-        Ok(Self {
+        let personal = library::Library::load(Path::new(context::INSTALL));
+        let status = if personal.is_err() {
+            "收藏记录无法读取，原文件已保留。".into()
+        } else {
+            String::new()
+        };
+        entries.insert(
+            0,
+            Entry {
+                path: PathBuf::new(),
+                name: "收藏夹".into(),
+                directory: true,
+                frontend: String::new(),
+                core: String::new(),
+                platform: "favorites".into(),
+                count: 0,
+                image: None,
+            },
+        );
+        let mut browser = Self {
             roots,
             levels: vec![Level {
+                kind: LibraryPage::Platforms,
                 path: None,
                 entries,
                 selected: 0,
@@ -224,27 +291,50 @@ impl Browser {
             canceled: false,
             exit: false,
             selected_context: None,
-            status: String::new(),
+            status,
             metadata: BTreeMap::new(),
             counts: BTreeMap::new(),
             indexing: true,
-        })
+            index: None,
+            personal: personal.unwrap_or_default(),
+            queries: index::Queries::default(),
+            query: String::new(),
+            keyboard: false,
+            key_selected: 0,
+            query_epoch: 0,
+            query_due: None,
+            search_running: false,
+        };
+        let job = browser.index_job();
+        if let Some(index) = Index::cached(&job.cache, &job.roots, &job.platforms) {
+            browser.indexed(index);
+            browser.indexing = true;
+        }
+        Ok(browser)
     }
 
     pub fn index_job(&self) -> IndexJob {
         IndexJob {
             roots: self.roots.clone(),
-            directories: self.levels[0]
+            platforms: self.levels[0]
                 .entries
                 .iter()
-                .map(|entry| entry.path.clone())
+                .filter(|entry| entry.platform != "favorites")
+                .cloned()
+                .map(|mut entry| {
+                    entry.count = 0;
+                    entry
+                })
                 .collect(),
+            cache: Path::new(context::INSTALL).join("catalog-index.json"),
         }
     }
 
     pub fn indexed(&mut self, index: Index) {
-        self.metadata = index.metadata;
-        self.counts = index.counts;
+        self.metadata = index.metadata.clone();
+        self.counts = index.counts.clone();
+        self.index = Some(Arc::new(index));
+        self.queries = index::Queries::default();
         self.indexing = false;
         for level in &mut self.levels {
             for entry in &mut level.entries {
@@ -259,6 +349,114 @@ impl Browser {
                 }
             }
         }
+        if self.kind() == LibraryPage::Favorites {
+            self.favorites();
+        }
+        if self.kind() == LibraryPage::Search {
+            self.changed_query();
+        }
+    }
+
+    fn kind(&self) -> LibraryPage {
+        self.levels.last().expect("Browser root").kind
+    }
+
+    fn changed_query(&mut self) {
+        self.query_epoch = self.query_epoch.wrapping_add(1);
+        let query = self.query.trim().to_lowercase();
+        self.query_due = None;
+        if self.kind() != LibraryPage::Search {
+            return;
+        }
+        if let Some(entries) = self.queries.get(&query) {
+            let level = self.levels.last_mut().expect("Browser root");
+            level.entries = entries;
+            level.selected = 0;
+        } else {
+            let level = self.levels.last_mut().expect("Browser root");
+            level.entries.clear();
+            level.selected = 0;
+            self.query_due = Some(crate::system::monotonic() + 0.1);
+        }
+    }
+
+    pub fn search_job(&mut self) -> Option<SearchJob> {
+        if self.search_running
+            || self
+                .query_due
+                .is_none_or(|time| crate::system::monotonic() < time)
+            || self.kind() != LibraryPage::Search
+        {
+            return None;
+        }
+        let index = self.index.clone()?;
+        self.query_due = None;
+        self.search_running = true;
+        Some(SearchJob {
+            index,
+            query: self.query.trim().to_lowercase(),
+            epoch: self.query_epoch,
+        })
+    }
+
+    pub fn searched(&mut self, result: SearchResult) {
+        self.search_running = false;
+        if result.epoch != self.query_epoch || self.kind() != LibraryPage::Search {
+            return;
+        }
+        self.queries.put(result.query, result.entries.clone());
+        let level = self.levels.last_mut().expect("Browser root");
+        level.entries = result.entries;
+        level.selected = 0;
+    }
+
+    fn favorites(&mut self) {
+        let level = self.levels.last_mut().expect("Browser root");
+        let selected = level
+            .entries
+            .get(level.selected)
+            .map(|entry| library::key(&entry.path));
+        let mut entries: Vec<_> = self.personal.favorites.values().cloned().collect();
+        if let Some(index) = &self.index {
+            for entry in &mut entries {
+                if let Some(current) = index.entries().find(|current| current.path == entry.path) {
+                    *entry = current.clone();
+                }
+            }
+        }
+        entries.sort_by_key(|entry| {
+            (
+                if self.personal.favorite_sort == library::Sort::Recent {
+                    std::cmp::Reverse(
+                        self.personal
+                            .recent
+                            .get(&library::key(&entry.path))
+                            .copied()
+                            .unwrap_or(0),
+                    )
+                } else {
+                    std::cmp::Reverse(0)
+                },
+                entry.name.to_lowercase(),
+                entry.path.clone(),
+            )
+        });
+        level.selected = selected
+            .and_then(|key| {
+                entries
+                    .iter()
+                    .position(|entry| library::key(&entry.path) == key)
+            })
+            .unwrap_or(level.selected.min(entries.len().saturating_sub(1)));
+        level.entries = entries;
+    }
+
+    fn available(&self, entry: &Entry) -> bool {
+        entry.path.canonicalize().is_ok_and(|path| {
+            path == entry.path
+                && self.roots.iter().any(|root| path.starts_with(root))
+                && path.exists()
+        })
     }
 
     fn children(&self, directory: &Entry) -> Result<Vec<Entry>> {
@@ -300,6 +498,11 @@ impl Browser {
     }
 
     pub fn dispatch(&mut self, action: &str) -> Result<Option<Entry>> {
+        let action = if action == "start" && self.kind() != LibraryPage::Search {
+            "confirm"
+        } else {
+            action
+        };
         if self.busy {
             if action == "back" {
                 self.canceled = true;
@@ -308,8 +511,101 @@ impl Browser {
             return Ok(None);
         }
         self.status.clear();
+        if action == "auxiliary" && self.kind() == LibraryPage::Platforms {
+            self.levels.push(Level {
+                kind: LibraryPage::Search,
+                path: None,
+                entries: Vec::new(),
+                selected: 0,
+            });
+            self.keyboard = true;
+            self.changed_query();
+            self.input_epoch = crate::system::monotonic();
+            return Ok(None);
+        }
+        if action == "auxiliary" && self.kind() == LibraryPage::Favorites {
+            match library::Library::sort(Path::new(context::INSTALL)) {
+                Ok(value) => {
+                    self.personal = value;
+                    self.favorites();
+                }
+                Err(_) => self.status = "无法保存排序，请重试。".into(),
+            }
+            return Ok(None);
+        }
+        if self.kind() == LibraryPage::Search {
+            if action == "start" {
+                self.keyboard = !self.keyboard;
+                return Ok(None);
+            }
+            if action == "auxiliary" {
+                if self.keyboard {
+                    self.query.pop();
+                    self.changed_query();
+                } else {
+                    self.keyboard = true;
+                }
+                return Ok(None);
+            }
+            if self.keyboard {
+                match action {
+                    "back" => self.keyboard = false,
+                    "left" => {
+                        self.key_selected =
+                            self.key_selected / 10 * 10 + (self.key_selected + 9) % 10
+                    }
+                    "right" => {
+                        self.key_selected =
+                            self.key_selected / 10 * 10 + (self.key_selected + 1) % 10
+                    }
+                    "up" => self.key_selected = (self.key_selected + 30) % 40,
+                    "down" => self.key_selected = (self.key_selected + 10) % 40,
+                    "confirm" => {
+                        match KEYS[self.key_selected] {
+                            "退格" => {
+                                self.query.pop();
+                            }
+                            "清空" => self.query.clear(),
+                            "结果" => {
+                                self.keyboard = false;
+                                return Ok(None);
+                            }
+                            text if self.query.chars().count() < 64 => {
+                                self.query.push_str(if text == "空格" { " " } else { text })
+                            }
+                            _ => {}
+                        }
+                        self.changed_query();
+                    }
+                    _ => {}
+                }
+                return Ok(None);
+            }
+        }
+        if action == "refresh" && self.kind() != LibraryPage::Platforms {
+            if let Some(entry) = self
+                .levels
+                .last()
+                .and_then(|level| level.entries.get(level.selected))
+                .filter(|entry| !entry.directory)
+                .cloned()
+            {
+                match library::Library::toggle(Path::new(context::INSTALL), &entry) {
+                    Ok(value) => {
+                        self.personal = value;
+                        if self.kind() == LibraryPage::Favorites {
+                            self.favorites();
+                        }
+                    }
+                    Err(_) => self.status = "无法保存收藏，请重试。".into(),
+                }
+            }
+            return Ok(None);
+        }
         if action == "back" {
             self.input_epoch = crate::system::monotonic();
+            self.query_epoch = self.query_epoch.wrapping_add(1);
+            self.query_due = None;
             if self.levels.len() > 1 {
                 self.levels.pop();
             } else {
@@ -317,10 +613,13 @@ impl Browser {
             }
             return Ok(None);
         }
+        let favorites = self.kind() == LibraryPage::Favorites;
         let level = self.levels.last_mut().ok_or("Missing game browser level")?;
         let delta = match action {
             "up" => -1,
             "down" => 1,
+            "left" if favorites => -1,
+            "right" if favorites => 1,
             "left" | "page_up" => -4,
             "right" | "page_down" => 4,
             _ => 0,
@@ -334,6 +633,25 @@ impl Browser {
             return Ok(None);
         }
         let selected = level.entries[level.selected].clone();
+        if selected.platform == "favorites" {
+            self.levels.push(Level {
+                kind: LibraryPage::Favorites,
+                path: None,
+                entries: Vec::new(),
+                selected: 0,
+            });
+            if let Ok(personal) = library::Library::load(Path::new(context::INSTALL)) {
+                self.personal = personal;
+            }
+            self.favorites();
+            self.input_epoch = crate::system::monotonic();
+            return Ok(None);
+        }
+        if !self.available(&selected) {
+            self.status = "游戏文件暂不可用，请检查存储卡。".into();
+            return Ok(None);
+        }
+
         require(
             self.roots
                 .iter()
@@ -349,6 +667,7 @@ impl Browser {
                 }
             };
             self.levels.push(Level {
+                kind: LibraryPage::Directory,
                 path: Some(selected),
                 entries,
                 selected: 0,
@@ -382,13 +701,18 @@ impl Browser {
 
     pub fn view(&self) -> Value {
         let level = self.levels.last().expect("Browser always has its root");
+        let visible = if self.kind() == LibraryPage::Favorites {
+            3
+        } else {
+            4
+        };
         let first = level
             .selected
-            .saturating_sub(3)
-            .min(level.entries.len().saturating_sub(4));
-        let entries: Vec<_> = level.entries.iter().skip(first).take(4).map(|entry| {
-            let detail = if entry.directory {
-                if self.indexing {
+            .saturating_sub(visible - 1)
+            .min(level.entries.len().saturating_sub(visible));
+        let entries: Vec<_> = level.entries.iter().skip(first).take(visible).map(|entry| {
+            let detail = if entry.platform=="favorites" { format!("{} 款游戏",self.personal.favorites.len()) } else if entry.directory {
+                if self.indexing && !self.counts.contains_key(&entry.path) {
                     format!("{} · 正在统计", entry.core)
                 } else {
                     format!("{} · {} 款游戏", entry.core, entry.count)
@@ -397,7 +721,9 @@ impl Browser {
                 entry.core.clone()
             };
             json!({
-                "key":format!("{:x}", Sha256::digest(entry.path.as_os_str().as_encoded_bytes())),
+                "key":if entry.platform=="favorites" {"favorites".into()} else {library::key(&entry.path)},
+                "favorite":self.personal.favorites.contains_key(&library::key(&entry.path)),
+                "available":entry.platform=="favorites" || self.available(entry),
                 "name":entry.name,"detail":detail,"icon":entry.platform,"directory":entry.directory
             })
         }).collect();
@@ -410,18 +736,40 @@ impl Browser {
             },
             level.entries.len()
         );
-        let status = if !self.status.is_empty() {
+        let position = if self.kind() == LibraryPage::Favorites {
+            format!(
+                "{position} · {}",
+                if self.personal.favorite_sort == library::Sort::Recent {
+                    "最近使用"
+                } else {
+                    "名称顺序"
+                }
+            )
+        } else {
+            position
+        };
+        let status = if self.kind() == LibraryPage::Search
+            && (self.query_due.is_some() || self.search_running)
+        {
+            "正在搜索本机游戏".into()
+        } else if self.kind() == LibraryPage::Search && self.query.trim().is_empty() {
+            "名称 / 文件名 / 拼音首字母".into()
+        } else if self.kind() == LibraryPage::Favorites && level.entries.is_empty() {
+            "在游戏列表按 X，把喜欢的游戏放在这里".into()
+        } else if !self.status.is_empty() {
             self.status.clone()
-        } else if self.indexing {
+        } else if self.indexing && self.index.is_none() {
             format!("{position} · 正在整理本机游戏")
         } else {
             position
         };
         json!({
+            "platforms":self.kind()==LibraryPage::Platforms,
+            "library":{"kind":level.kind,"query":self.query,"keyboard":self.keyboard && self.kind()==LibraryPage::Search,"key_selected":self.key_selected,"row_selected":level.selected.saturating_sub(first),"sort":self.personal.favorite_sort},
             "artwork":level.entries.get(level.selected).and_then(|entry|entry.image.as_ref()).map(|path|path.to_string_lossy().into_owned()).unwrap_or_default(),
-            "page":"games","title":if self.levels.len()==1 { "选择游戏平台" } else { "选择游戏" },
-            "core":level.path.as_ref().map(|entry|entry.name.clone()).unwrap_or_else(||"本机游戏".into()),
-            "selected":level.selected.saturating_sub(first),"entries":entries,"rooms":[],"room_name":"",
+            "page":"games","title":match self.kind() {LibraryPage::Platforms=>"选择游戏平台",LibraryPage::Favorites=>"收藏夹",LibraryPage::Search=>"搜索游戏",LibraryPage::Directory=>"选择游戏"},
+            "core":level.path.as_ref().map(|entry|entry.name.clone()).unwrap_or_else(||match self.kind() {LibraryPage::Favorites=>"喜欢的游戏，随时出发",LibraryPage::Search=>"查找本机游戏",_=>"本机游戏"}.into()),
+            "selected":if self.keyboard && self.kind()==LibraryPage::Search {100+self.key_selected} else {level.selected.saturating_sub(first)},"entries":entries,"rooms":[],"room_name":"",
             "ready":false,"busy":self.busy,"refreshing":self.indexing,"status":status,"phase":"idle",
             "back_label":if self.busy {"取消"} else if self.levels.len()==1 {"返回"} else {"上级"}
         })

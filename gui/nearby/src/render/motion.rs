@@ -270,7 +270,10 @@ impl Timeline {
             self.press_at = Some(now);
         }
         self.walker.target(
-            if selected == Some(1) {
+            if view.page == Page::Games && view.library.kind == crate::model::LibraryKind::Favorites
+            {
+                Fixed::from_ratio(1, 6) + Fixed::from_ratio(selected.unwrap_or(0).min(2) as i32, 3)
+            } else if selected == Some(1) {
                 anchors::CHOICE_RIGHT
             } else {
                 anchors::CHOICE_LEFT

@@ -33,6 +33,10 @@ pub(super) struct Row {
     pub directory: bool,
     #[observe]
     pub icon: u8,
+    #[observe]
+    pub platform: super::consoles::Platform,
+    #[observe]
+    pub favorite: bool,
 }
 
 #[model]
@@ -68,6 +72,8 @@ impl Row {
             available: data.available,
             directory: false,
             icon: 0,
+            platform: super::consoles::Platform::Unknown,
+            favorite: false,
         }
     }
     pub fn game(index: usize, data: &GameRow) -> Self {
@@ -80,6 +86,8 @@ impl Row {
             strength: 0,
             available: data.available,
             directory: data.directory,
+            platform: super::consoles::Platform::from_id(&data.icon),
+            favorite: data.favorite,
             icon: match data.icon.as_str() {
                 "gb" | "gbc" | "gba" => 1,
                 "arcade" | "neogeo" | "cps1" | "cps2" | "cps3" => 2,

@@ -35,6 +35,7 @@ pub const ALLOWED: &[&str] = &[
     "licenses/driver-COPYING.txt",
     "release-sources.json",
     "licenses/ring-LICENSE.txt",
+    "licenses/pinyin-LICENSE.txt",
     "compat/arm64/libstdc++.so.6",
     "compat/arm64/libgcc_s.so.1",
     "compat/arm64/source.json",

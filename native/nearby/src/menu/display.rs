@@ -17,7 +17,7 @@ use crate::context::INSTALL;
 use crate::system::{mkdir, monotonic, private_write, random_id};
 use crate::{Result, require};
 
-const KEYS: &str = "a = enter\nb = esc\nback = esc\nx = r\ny = y\nstart = enter\nup = up\ndown = down\nleft = left\nright = right\nl1 = pageup\nr1 = pagedown\nl2 = pageup\nr2 = pagedown\nleft_analog_up = up\nleft_analog_down = down\nleft_analog_left = left\nleft_analog_right = right\nright_analog_up = up\nright_analog_down = down\nright_analog_left = left\nright_analog_right = right\ndeadzone_triggers = 32767\n";
+const KEYS: &str = "a = enter\nb = esc\nback = esc\nx = r\ny = y\nstart = tab\nup = up\ndown = down\nleft = left\nright = right\nl1 = pageup\nr1 = pagedown\nl2 = pageup\nr2 = pagedown\nleft_analog_up = up\nleft_analog_down = down\nleft_analog_left = left\nleft_analog_right = right\nright_analog_up = up\nright_analog_down = down\nright_analog_left = left\nright_analog_right = right\ndeadzone_triggers = 32767\n";
 
 struct Temporary(PathBuf);
 impl Drop for Temporary {
@@ -142,6 +142,8 @@ impl Display {
                                         | "refresh"
                                         | "page_up"
                                         | "page_down"
+                                        | "auxiliary"
+                                        | "start"
                                 )
                             })
                             .map(|s| Event::Input(s.into(), monotonic()))

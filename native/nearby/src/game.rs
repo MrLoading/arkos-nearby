@@ -2,6 +2,8 @@ use std::fs::{self, File};
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::process::{Command, Stdio};
+use std::thread;
+use std::time::Duration;
 
 use serde_json::{Value, json};
 
@@ -376,6 +378,10 @@ pub fn run(id: &str) -> Result<()> {
                 .stderr(Stdio::from(log))
                 .spawn()?,
         );
+        thread::sleep(Duration::from_millis(250));
+        if child.0.try_wait()?.is_none() {
+            crate::catalog::library::record_play(&context);
+        }
         let status = child.0.wait()?;
         game["phase"] = if status.success() { "exited" } else { "failed" }.into();
         game["returncode"] = json!(status.code());

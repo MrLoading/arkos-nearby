@@ -205,6 +205,15 @@ pub(super) fn status_text(view: &View) -> &str {
 }
 
 pub(super) fn hint_text(view: &View) -> &str {
+    if view.page == Page::Games && !view.busy {
+        return match view.library.kind {
+            crate::model::LibraryKind::Platforms => "Y 搜索 · L/R 翻页",
+            crate::model::LibraryKind::Favorites => "X 移除 · Y 排序",
+            crate::model::LibraryKind::Search if view.library.keyboard => "Y 退格 · START 结果",
+            crate::model::LibraryKind::Search => "X 收藏 · Y 键盘",
+            _ => "X 收藏 · L/R 翻页",
+        };
+    }
     if view.page == Page::Lobby {
         return "下 / R 展开操作";
     }
@@ -243,6 +252,9 @@ pub(super) fn hint_text(view: &View) -> &str {
 }
 
 pub(super) fn confirm_text(view: &View) -> &str {
+    if view.page == Page::Games && view.library.keyboard && !view.busy {
+        return "输入";
+    }
     if view.page == Page::Candidates {
         return if view
             .entries

@@ -1,4 +1,113 @@
 use super::*;
+
+#[test]
+fn library_content_is_owned_by_its_route_during_page_departure() {
+    for kind in [
+        crate::model::LibraryKind::Platforms,
+        crate::model::LibraryKind::Directory,
+        crate::model::LibraryKind::Favorites,
+        crate::model::LibraryKind::Search,
+    ] {
+        let mut app = app([640, 480]);
+        let mut current = view(Page::Games);
+        current.library.kind = kind;
+        current.platforms = kind == crate::model::LibraryKind::Platforms;
+        current.selected = 1;
+        current.artwork = "retained-cover".into();
+        let mut scene = draw(&mut app, &current).unwrap();
+        let count = scene.state.entries().entries().len();
+        scene.navigation_intent(true);
+        update(
+            &mut scene,
+            &View {
+                page: Page::Lobby,
+                ..View::default()
+            },
+        )
+        .unwrap();
+        for at in [16, 32, 64, 128, 256, 1000] {
+            paint_at(&mut app, &scene, at);
+            assert_eq!(scene.state.entries().entries().len(), count);
+            assert_eq!(scene.state.artwork(), "retained-cover");
+            assert_eq!(scene.state.library_selection(), 1);
+            assert_eq!(scene.state.platforms(), current.platforms);
+            assert!(!app.world.query::<Text>().iter().any(|(entity, text)| {
+                if text.resolve(None) != "没有可选游戏" {
+                    return false;
+                }
+                let mut node = Some(entity);
+                while let Some(entity) = node {
+                    if mirui::ui::branch::is_effectively_hidden(&app.world, entity) {
+                        return false;
+                    }
+                    node = app.world.get::<mirui::ui::Parent>(entity).map(|p| p.0);
+                }
+                true
+            }));
+        }
+        current.entries.clear();
+        current.artwork.clear();
+        update(&mut scene, &current).unwrap();
+        paint_at(&mut app, &scene, 2000);
+        assert!(
+            scene.state.entries().is_empty(),
+            "A real empty library still updates"
+        );
+        assert!(scene.state.artwork().is_empty());
+    }
+}
+
+#[test]
+fn library_routes_keep_focus_inside_their_cards_and_keyboard() {
+    use crate::model::LibraryKind;
+    for size in [[480, 320], [640, 480]] {
+        let mut app = app(size);
+        let mut current = view(Page::Games);
+        current.library.kind = LibraryKind::Favorites;
+        current.entries.truncate(3);
+        let mut scene = draw(&mut app, &current).unwrap();
+        for index in 0..3 {
+            current.selected = index;
+            update(&mut scene, &current).unwrap();
+            paint_at(&mut app, &scene, 1000 + index as u64 * 1000);
+            let [x, y, w, h] = focus_rect(&app).expect("Favorite has a focus target");
+            assert!(
+                x >= 0
+                    && y >= 0
+                    && w > 0
+                    && h > 0
+                    && x + w <= i32::from(size[0])
+                    && y + h <= i32::from(size[1])
+            );
+            assert_full_frame_matches(&mut app, "Favorite focus and card motion");
+        }
+        current.library.kind = LibraryKind::Search;
+        current.library.keyboard = true;
+        current.library.query = "ZDR".into();
+        for index in [0, 9, 19, 29, 39] {
+            current.selected = 100 + index;
+            current.library.key_selected = index;
+            update(&mut scene, &current).unwrap();
+            for at in [5000, 5500, 6000] {
+                paint_at(&mut app, &scene, at + index as u64 * 1000);
+            }
+            let [x, y, w, h] = focus_rect(&app).expect("Keyboard has a focus target");
+            assert!(
+                x >= 0
+                    && y >= 0
+                    && w > 0
+                    && h > 0
+                    && x + w <= i32::from(size[0])
+                    && y + h <= i32::from(size[1])
+            );
+        }
+        current.library.keyboard = false;
+        current.selected = 0;
+        update(&mut scene, &current).unwrap();
+        paint_at(&mut app, &scene, 50000);
+        assert!(focus_rect(&app).is_some());
+    }
+}
 use super::{copy::*, selection::FocusTarget};
 use crate::model::{GameRow, Page, Phase, RoomRow};
 use mirui::core::model::ModelHandle;
@@ -223,6 +332,7 @@ fn view(page: Page) -> View {
             .collect(),
         entries: (0..4)
             .map(|i| GameRow {
+                favorite: false,
                 key: format!("row-{i}"),
                 name: format!("游戏 {i} / Multiplayer"),
                 detail: "NES / FC".into(),
@@ -1177,6 +1287,23 @@ fn lobby_sheets_retain_entities_and_scope_focus_through_reversal() {
         };
         paint_at(&mut app, &scene, 1000);
         let room_target = target(&app);
+        let deck = app.world.find_by_id("discovery_deck").unwrap();
+        let text_layout: Vec<_> = app
+            .world
+            .query::<Text>()
+            .iter()
+            .filter(|(entity, _)| {
+                selection::contains(deck, *entity, |node| {
+                    app.world.get::<mirui::ui::Parent>(node).map(|p| p.0)
+                })
+            })
+            .filter_map(|(entity, _)| {
+                app.world
+                    .get::<ComputedRect>(entity)
+                    .map(|rect| (entity, rect.0))
+            })
+            .collect();
+        assert!(!text_layout.is_empty());
         for (time, page) in [
             (1100, Page::Mode),
             (1180, Page::Lobby),
@@ -1196,6 +1323,13 @@ fn lobby_sheets_retain_entities_and_scope_focus_through_reversal() {
             paint_at(&mut app, &scene, time);
             assert_eq!(body(&app), retained);
             assert_eq!(scene.state.rooms().len(), 4);
+            for (entity, rect) in &text_layout {
+                assert_eq!(
+                    app.world.get::<ComputedRect>(*entity).unwrap().0,
+                    *rect,
+                    "Deck motion must preserve local text layout and cache coordinates"
+                );
+            }
             if page == Page::Mode {
                 assert_ne!(target(&app), room_target);
             } else {

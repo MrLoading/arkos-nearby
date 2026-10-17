@@ -4,7 +4,8 @@ use super::{
     cache::GpuLayerCache,
     choices::choice,
     chrome::{footer, header},
-    lists::{game_rows, games, lobby, rooms},
+    library::library,
+    lists::{game_rows, lobby, rooms},
     pixel::Scenery,
     sessions::{host, joined, leaving, network_panel, unavailable},
     state::DisplayState,
@@ -133,7 +134,7 @@ pub(super) fn page(view: PageKey, state: model!(DisplayState), metrics: Metrics)
                                 unavailable (metrics)
                             }
                             Page :: Games => {
-                                games (state, metrics)
+                                library (view.library, state, metrics)
                             }
                         }
                     }

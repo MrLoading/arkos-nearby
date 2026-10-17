@@ -10,11 +10,12 @@ checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
 name = "arkos-nearby"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "crc32fast",
  "flate2",
  "libc",
+ "pinyin",
  "ring",
  "roxmltree",
  "serde",
@@ -160,6 +161,12 @@ dependencies = [
  "adler2",
  "simd-adler32",
 ]
+
+[[package]]
+name = "pinyin"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e225f595052d9c46045755be4b8d7950b6d9f3c33e0c0b74ba58f11bbfa8c64b"
 
 [[package]]
 name = "proc-macro2"

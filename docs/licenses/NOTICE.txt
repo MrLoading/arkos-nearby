@@ -12,3 +12,5 @@ The Netplay compression helper includes its MIT license and the RetroArch stream
 Nestopia 1.53.2 uses the GNU GPL version 2; its state restoration patch and source archive reference are included.
 
 Asset versions, checksums and source locations are recorded in release-sources.json.
+
+Pinyin 0.11.0 provides Chinese title transliteration under the MIT license.

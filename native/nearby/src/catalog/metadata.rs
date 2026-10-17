@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 const MAX_XML_BYTES: u64 = 32 * 1024 * 1024;
 const MAX_RECORDS: usize = 100_000;
 
-#[derive(Clone, Default)]
+#[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
 pub(super) struct Metadata {
     pub name: String,
     pub image: Option<PathBuf>,

@@ -2,7 +2,7 @@
 
 ## 下载与校验
 
-两台掌机安装同一个版本。下载 [arkos-nearby-0.7.0-arm64.tar.gz](https://github.com/W-Mai/arkos-nearby/releases/download/v0.7.0/arkos-nearby-0.7.0-arm64.tar.gz) 和 [SHA256SUMS](https://github.com/W-Mai/arkos-nearby/releases/download/v0.7.0/SHA256SUMS)。在下载目录执行 `sha256sum --ignore-missing -c SHA256SUMS`；macOS 可使用 `shasum -a 256 -c SHA256SUMS` 并只核对实际下载的文件。
+两台掌机安装同一个版本。下载 [arkos-nearby-0.8.0-arm64.tar.gz](https://github.com/W-Mai/arkos-nearby/releases/download/v0.8.0/arkos-nearby-0.8.0-arm64.tar.gz) 和 [SHA256SUMS](https://github.com/W-Mai/arkos-nearby/releases/download/v0.8.0/SHA256SUMS)。在下载目录执行 `sha256sum --ignore-missing -c SHA256SUMS`；macOS 可使用 `shasum -a 256 -c SHA256SUMS` 并只核对实际下载的文件。
 
 解压后包含 `arkos-nearby`、`Install Nearby Multiplayer.sh`、安装说明、许可证和可执行文件校验值。
 
@@ -13,6 +13,14 @@
 安装完成后重启掌机。通过 Options → Nearby Multiplayer 或主页 FN + X 打开工具，已连接 Wi-Fi 时会显示附近房间。向下移动或按 R 展开「仅组网／选择游戏」，向上移动或按 L 返回房间列表。单独按 X 保留主页的随机选择功能。游戏开始加载前按住 X，可直接进入当前游戏的创建／加入房间界面。
 
 在选择模式或创建／加入房间的入口页按 Y 切换松林、落日和夜营主题。配色会自动保存。
+
+## 游戏库
+
+选择游戏平台可查看游戏数量、主机图案与游戏截图。游戏列表中按 X 收藏当前游戏；平台列表顶部的「收藏夹」以横向卡带展示收藏，左右移动选择，按 Y 切换名称或最近使用排序，按 X 移除收藏。
+
+在平台列表按 Y 打开搜索，使用方向键和 A 输入游戏名、文件名或中文名的拼音／首字母。按 Y 退格，按 START 切换键盘与结果列表，按 B 收起键盘或返回平台列表。在结果列表中按 X 收藏，按 A 选择游戏并进入创建／加入房间。
+
+收藏与最近使用记录保存在掌机上。再次打开游戏库时会恢复收藏和排序方式。
 
 ## 仅组网
 

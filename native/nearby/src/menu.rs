@@ -27,6 +27,7 @@ enum Event {
     Action(Request, Value, bool),
     Prepared(std::result::Result<Box<Context>, String>),
     Indexed(crate::catalog::Index),
+    Searched(crate::catalog::SearchResult),
 }
 
 enum Outcome {
@@ -176,7 +177,7 @@ impl MenuSession {
     ) -> Result<Outcome> {
         let sender = self.display.begin_screen();
         if let Some(browser) = &mut browser {
-            browser.input_epoch = monotonic();
+            browser.reopen();
             if browser.indexing {
                 let job = browser.index_job();
                 let sender = sender.clone();
@@ -219,6 +220,10 @@ impl MenuSession {
                     if let Some(context) = browser.selected_context.take() {
                         return Ok(Outcome::Selected(Box::new(context)));
                     }
+                    if let Some(job) = browser.search_job() {
+                        let sender = sender.clone();
+                        thread::spawn(move || sender.send(Event::Searched(job.run())));
+                    }
                     self.display.present(browser.view())?;
                     match self.display.receive() {
                         Ok(Some(Event::Input(action, at))) if at >= browser.input_epoch => {
@@ -240,6 +245,7 @@ impl MenuSession {
                             browser.prepared(result.map(|context| *context));
                         }
                         Ok(Some(Event::Indexed(index))) => browser.indexed(index),
+                        Ok(Some(Event::Searched(result))) => browser.searched(result),
                         Ok(Some(Event::FrameReady)) => {
                             log(json!({"phase":"frame_submitted","frame_submitted":true}))?
                         }
@@ -334,7 +340,7 @@ impl MenuSession {
                     Ok(Some(Event::Action(request, result, failed))) => {
                         flow.complete(&request, result, failed)
                     }
-                    Ok(Some(Event::Prepared(_) | Event::Indexed(_))) => {}
+                    Ok(Some(Event::Prepared(_) | Event::Indexed(_) | Event::Searched(_))) => {}
                     Ok(None) | Err(mpsc::RecvTimeoutError::Timeout) => {}
                     Err(error) => return Err(error.into()),
                 }

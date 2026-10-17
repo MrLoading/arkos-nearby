@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::path::Path;
 use std::sync::mpsc::{self, Receiver, SyncSender};
 use std::time::{Duration, Instant};
@@ -8,13 +9,15 @@ use mirui::core::resource::ResourceManager;
 use mirui::prelude::*;
 use mirui::render::texture::{ColorFormat, Texture};
 use mirui::surface::Surface;
-use mirui::ui::widgets::{Image, TextAlign::Center};
+use mirui::ui::widgets::Image;
 
-use super::{state::DisplayState, style::*, widgets::label};
+use super::consoles::console;
+use super::{state::DisplayState, style::*};
 
 const PREVIEW_WIDTH: u32 = 256;
 const PREVIEW_HEIGHT: u32 = 192;
 const DEBOUNCE: Duration = Duration::from_millis(120);
+type ArtworkKey = (String, Option<(u64, Option<std::time::SystemTime>)>);
 
 #[model]
 #[derive(Default)]
@@ -33,6 +36,7 @@ impl Artwork {
     }
 }
 
+#[derive(Clone)]
 struct Pixels {
     bytes: Vec<u8>,
     width: u16,
@@ -92,8 +96,26 @@ pub(super) fn install<B: Surface, F: RendererFactory<B>>(app: &mut App<B, F>) {
     let (send, jobs) = mpsc::sync_channel::<(u64, String)>(1);
     let (results, receive) = mpsc::sync_channel(1);
     std::thread::spawn(move || {
+        let mut cache: VecDeque<(ArtworkKey, Option<Pixels>)> = VecDeque::new();
         while let Ok((revision, path)) = jobs.recv() {
-            if results.send((revision, decode(&path))).is_err() {
+            let stamp = std::fs::metadata(&path)
+                .ok()
+                .map(|meta| (meta.len(), meta.modified().ok()));
+            let key = (path.clone(), stamp);
+            let pixels = if let Some(index) = cache.iter().position(|(old, _)| old == &key) {
+                let item = cache.remove(index).expect("Located cached artwork");
+                let pixels = item.1.clone();
+                cache.push_back(item);
+                pixels
+            } else {
+                let pixels = decode(&path);
+                if cache.len() == 8 {
+                    cache.pop_front();
+                }
+                cache.push_back((key, pixels.clone()));
+                pixels
+            };
+            if results.send((revision, pixels)).is_err() {
                 break;
             }
         }
@@ -171,7 +193,7 @@ fn update(
 }
 
 #[compose]
-pub(super) fn preview(metrics: Metrics) -> Entity {
+pub(super) fn preview(state: model!(DisplayState), metrics: Metrics) -> Entity {
     let art = res!(Loader).with(|loader| loader.model.clone());
     let placeholder = art.clone();
     ui! {
@@ -180,7 +202,7 @@ pub(super) fn preview(metrics: Metrics) -> Entity {
             min_width: 0,
             min_height: 0,
             bg_color: PANEL,
-            padding: Padding::all(metrics.inset),
+            padding: Padding::all(2),
             justify: JustifyContent::Center,
             row_gap: metrics.gap
         ) {
@@ -194,7 +216,11 @@ pub(super) fn preview(metrics: Metrics) -> Entity {
                     )
                 }
                 if ${ !placeholder.ready() } {
-                    label ("游戏预览", metrics.body, SECONDARY, Center)
+                    Column (grow: 1.0, min_height: 0, width: Dimension::percent(100)) {
+                        walk ${ std::iter::once(state.selected_platform()) } with platform by platform {
+                            console (platform)
+                        }
+                    }
                 }
             }
         }

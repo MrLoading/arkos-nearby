@@ -571,6 +571,17 @@
     "included": true
   },
   {
+    "name": "pinyin",
+    "version": "0.11.0",
+    "license": "MIT",
+    "repository": "https://github.com/mozillazg/rust-pinyin",
+    "checksum": "e225f595052d9c46045755be4b8d7950b6d9f3c33e0c0b74ba58f11bbfa8c64b",
+    "license_files": [
+      "docs/licenses/rust/pinyin-0.11.0/LICENSE"
+    ],
+    "included": true
+  },
+  {
     "name": "png",
     "version": "0.17.16",
     "license": "MIT OR Apache-2.0",

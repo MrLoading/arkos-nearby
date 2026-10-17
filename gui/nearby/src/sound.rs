@@ -149,6 +149,9 @@ struct Feedback {
 
 fn selection(view: &View) -> Option<String> {
     match view.page {
+        Page::Games if view.library.keyboard => {
+            Some(format!("keyboard:{}", view.library.key_selected))
+        }
         Page::Mode | Page::Choice => Some(view.selected.to_string()),
         Page::Rooms | Page::Lobby => view.rooms.get(view.selected).map(|row| row.key.clone()),
         Page::Games | Page::Candidates => {
@@ -180,6 +183,14 @@ impl Feedback {
             return None;
         }
         let cue = match action {
+            Action::Auxiliary | Action::Start | Action::Refresh
+                if view.page == Page::Games && !view.busy =>
+            {
+                Some(Cue::Confirm)
+            }
+            Action::Confirm if view.page == Page::Games && view.library.keyboard && !view.busy => {
+                Some(Cue::Confirm)
+            }
             Action::Back if view.page != Page::Leaving => Some(Cue::Back),
             Action::Theme if view.can_switch_theme() => Some(Cue::Confirm),
             Action::Refresh

@@ -23,6 +23,15 @@ pub(super) struct StepColors {
     pub(super) foreground: ColorToken,
 }
 
+#[derive(Default)]
+struct LibraryPresentation {
+    entries: Vec<crate::model::GameRow>,
+    detail: crate::model::LibraryView,
+    selected: usize,
+    platforms: bool,
+    artwork: String,
+}
+
 #[derive(Clone, Copy, Default)]
 pub(super) struct Changes(u16);
 
@@ -40,6 +49,7 @@ impl Changes {
     const PEER: Self = Self(1 << 9);
     const CONFIRM: Self = Self(1 << 10);
     const DEVICES: Self = Self(1 << 11);
+    const QUERY: Self = Self(1 << 12);
     fn contains(self, mask: Self) -> bool {
         self.0 & mask.0 == mask.0
     }
@@ -66,16 +76,21 @@ impl Changes {
         peer = Changes::PEER,
         confirm = Changes::CONFIRM,
         devices = Changes::DEVICES,
+        query = Changes::QUERY,
     )
 )]
 pub(super) struct DisplayState {
+    #[observe]
+    pub(super) deck_height: Fixed,
     view: View,
+    library: LibraryPresentation,
     pub(crate) settings: model!(owned crate::settings::Settings),
     direction: PageDirection,
     pub(super) rooms: model!(owned ModelList<Row>),
     pub(super) entries: model!(owned ModelList<Row>),
     row_revision: u64,
     devices: Vec<crate::model::NetworkPeer>,
+    query: String,
     room_name: String,
     heading: String,
     subtitle: String,
@@ -103,8 +118,16 @@ pub(super) struct DisplayState {
 
 #[model]
 impl DisplayState {
+    pub(super) fn set_deck_height(&mut self, height: Fixed) -> Changes {
+        self.deck_height = height;
+        Changes::NONE
+    }
+
     pub(super) fn present(&mut self, view: &View) -> Changes {
         let mut changes = Changes::NONE;
+        if view.page == Page::Games {
+            changes.update(&mut self.query, view.library.query.clone(), Changes::QUERY);
+        }
         changes.update(&mut self.status, status_text(view).into(), Changes::STATUS);
         changes.update(&mut self.hint, hint_text(view).into(), Changes::HINT);
         changes.update(
@@ -186,12 +209,15 @@ impl DisplayState {
             self.row_revision = self.row_revision.wrapping_add(1);
             rows::reconcile(&mut self.rooms, rows, self.row_revision);
         }
-        if self
-            .view
-            .entries
-            .iter()
-            .take(4)
-            .ne(view.entries.iter().take(4))
+        // An outgoing library remains mounted throughout the page transition.
+        // Other routes must not replace its content with their empty defaults.
+        if view.page == Page::Games
+            && self
+                .library
+                .entries
+                .iter()
+                .take(4)
+                .ne(view.entries.iter().take(4))
         {
             self.row_revision = self.row_revision.wrapping_add(1);
             let entries = view
@@ -202,6 +228,15 @@ impl DisplayState {
                 .map(|(i, row)| Row::game(i, row))
                 .collect();
             rows::reconcile(&mut self.entries, entries, self.row_revision);
+        }
+        if view.page == Page::Games {
+            self.library = LibraryPresentation {
+                entries: view.entries.iter().take(4).cloned().collect(),
+                detail: view.library.clone(),
+                selected: view.selected,
+                platforms: view.platforms,
+                artwork: view.artwork.clone(),
+            };
         }
         let mut devices = vec![crate::model::NetworkPeer {
             name: "本机".into(),
@@ -282,6 +317,11 @@ impl DisplayState {
     #[observe]
     pub(super) fn page_key(&self) -> PageKey {
         PageKey {
+            library: if self.view.page == Page::Games {
+                self.view.library.kind
+            } else {
+                crate::model::LibraryKind::Directory
+            },
             page: self.view.scene_page(),
             network_only: self.view.network_only
                 && matches!(
@@ -311,6 +351,9 @@ impl DisplayState {
     #[observe]
     pub(super) fn selected(&self) -> Option<usize> {
         match self.view.page {
+            Page::Games if self.view.library.keyboard => {
+                Some(100 + self.view.library.key_selected.min(39))
+            }
             Page::Mode => Some(
                 self.view
                     .selected
@@ -345,7 +388,51 @@ impl DisplayState {
     }
 
     pub(super) fn artwork(&self) -> String {
-        self.view.artwork.clone()
+        self.library.artwork.clone()
+    }
+
+    #[observe]
+    pub(super) fn platforms(&self) -> bool {
+        self.library.platforms
+    }
+
+    #[observe]
+    pub(super) fn library_selection(&self) -> usize {
+        if self.library.detail.keyboard {
+            self.library.detail.row_selected
+        } else {
+            self.library.selected
+        }
+    }
+
+    #[observe]
+    pub(super) fn selected_platform(&self) -> super::consoles::Platform {
+        super::consoles::Platform::from_id(
+            self.library
+                .entries
+                .get(self.library_selection())
+                .map(|row| row.icon.as_str())
+                .unwrap_or_default(),
+        )
+    }
+
+    #[observe]
+    pub(super) fn library_kind(&self) -> crate::model::LibraryKind {
+        self.library.detail.kind
+    }
+
+    #[observe]
+    pub(super) fn keyboard(&self) -> bool {
+        self.library.detail.keyboard
+    }
+
+    #[observe]
+    pub(super) fn recent_sort(&self) -> bool {
+        self.library.detail.sort == "recent"
+    }
+
+    fn query_value(&self) -> String {
+        self.query.clone()
     }
 
     #[observe]
@@ -419,11 +506,16 @@ pub(super) type DisplayHandle = <DisplayState as mirui::core::model::Model>::Han
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) struct PageKey {
+    pub(super) library: crate::model::LibraryKind,
     pub(super) page: Page,
     pub(super) network_only: bool,
 }
 
 impl DisplayStateHandle {
+    pub(super) fn query(&self) -> String {
+        self.query_revision();
+        self.query_value()
+    }
     pub(super) fn room_name(&self) -> String {
         self.room_name_revision();
         self.room_name_value()
@@ -491,7 +583,10 @@ pub(super) struct DisplayRuntime {
 pub(super) fn install<B: Surface, F: RendererFactory<B>>(app: &mut App<B, F>) {
     let state = app
         .add_model(DisplayState {
+            deck_height: Fixed::ZERO,
             view: View::default(),
+            library: LibraryPresentation::default(),
+            query: String::new(),
             settings: crate::settings::Settings::default().into(),
             direction: PageDirection::Forward,
             rooms: ModelList::bounded(4).into(),

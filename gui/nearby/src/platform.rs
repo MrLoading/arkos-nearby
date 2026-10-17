@@ -337,6 +337,8 @@ impl Terminal {
                     actions.push(Action::Refresh);
                 } else if first == b'y' || first == b'Y' {
                     actions.push(Action::Theme);
+                } else if first == b'\t' {
+                    actions.push(Action::Start);
                 }
             }
         }

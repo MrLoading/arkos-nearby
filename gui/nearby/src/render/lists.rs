@@ -1,5 +1,6 @@
 use super::artwork::preview;
 use super::choices::choice;
+use super::consoles::console;
 use super::pixel::Stage::Search;
 use super::selection::FocusTarget;
 use super::{
@@ -14,7 +15,7 @@ use mirui::prelude::*;
 use mirui::ui::widgets::TextAlign::{Center, Start};
 use mirui::ui::widgets::{Image, Text};
 
-// Both sheets retain their layout and models while their allocated space changes.
+// Sheet contents keep their layout coordinates while the viewports move and clip.
 const DECK_PEEK: Fixed = Fixed::from_ratio(14, 100);
 const DECK_FULL: Fixed = Fixed::from_ratio(86, 100);
 const DECK_MIN_SCALE: Fixed = Fixed::from_ratio(44, 100);
@@ -23,16 +24,11 @@ fn sheet_scale(expansion: Fixed) -> Fixed {
     DECK_MIN_SCALE + (Fixed::ONE - DECK_MIN_SCALE) * expansion
 }
 
-fn sheet_offset(expansion: Fixed) -> Dimension {
-    Dimension::Percent(
-        (sheet_scale(expansion) - Fixed::ONE) * DECK_FULL / sheet_share(expansion)
-            * Fixed::from_int(50),
-    )
-}
-
-fn sheet_transform(expansion: Fixed) -> mirui::types::Transform {
+fn sheet_transform(expansion: Fixed, height: Fixed) -> mirui::types::Transform {
     let scale = sheet_scale(expansion);
-    mirui::types::Transform::scale(scale, scale)
+    // The widget transform pivots around its center; keep its painted top at zero.
+    mirui::types::Transform::translate(Fixed::ZERO, (scale - Fixed::ONE) * height * DECK_FULL / 2)
+        .compose(&mirui::types::Transform::scale(scale, scale))
 }
 
 fn sheet_share(expansion: Fixed) -> Fixed {
@@ -42,10 +38,16 @@ fn sheet_share(expansion: Fixed) -> Fixed {
 #[compose]
 pub(super) fn lobby(state: model!(DisplayState), metrics: Metrics) -> Entity {
     ui! {
-        Column (id: "discovery_deck", grow: 1.0, min_height: 0, container: true) {
+        Column (id: "discovery_deck", grow: 1.0, min_height: 0, container: true) on SizeChanged {
+            state.set_deck_height(event.new.height);
+        } {
             walk [false, true].into_iter() with actions {
                 Column (
+                    position: Position::Absolute,
+                    width: Dimension::percent(100),
+                    top: 0,
                     height: ${ Dimension::Percent(sheet_share(if actions { state.deck() } else { Fixed::ONE - state.deck() }) * Fixed::from_int(100)) },
+                    transform: ${ mirui::types::Transform::translate(Fixed::ZERO, if actions { state.deck_height() * sheet_share(Fixed::ONE - state.deck()) } else { Fixed::ZERO }) },
                     shrink: 0.0,
                     container: true,
                     min_height: 0,
@@ -55,8 +57,8 @@ pub(super) fn lobby(state: model!(DisplayState), metrics: Metrics) -> Entity {
                         position: Position::Absolute,
                         width: Dimension::percent(100),
                         height: @(id("discovery_deck").height as deck_height) { deck_height * DECK_FULL },
-                        top: ${ sheet_offset(if actions { state.deck() } else { Fixed::ONE - state.deck() }) },
-                        transform: ${ sheet_transform(if actions { state.deck() } else { Fixed::ONE - state.deck() }) },
+                        top: 0,
+                        transform: ${ sheet_transform(if actions { state.deck() } else { Fixed::ONE - state.deck() }, state.deck_height()) },
                         shrink: 0.0,
                         row_gap: metrics.gap,
                         padding: Padding::all(metrics.gap),
@@ -65,7 +67,7 @@ pub(super) fn lobby(state: model!(DisplayState), metrics: Metrics) -> Entity {
                     ] {
                         if actions {
                             label ("仅组网 / 选择游戏", metrics.body, SECONDARY, Start)
-                            choice (super::state::PageKey { page: crate::model::Page::Mode, network_only: false }, state, metrics)
+                            choice (super::state::PageKey { page: crate::model::Page::Mode, network_only: false, library: crate::model::LibraryKind::Directory }, state, metrics)
                         } else {
                             label ("附近正在玩的伙伴", metrics.title, FOREGROUND, Start)
                             discovery_status (state, metrics)
@@ -160,17 +162,25 @@ pub(super) fn games(state: model!(DisplayState), metrics: Metrics) -> Entity {
         Row (grow: 1.0, min_height: 0, column_gap: metrics.gap) [
             Scenery::Ridge,
         ] {
-            Column (grow: 3.0, width: Dimension::percent(60), min_width: 0, min_height: 0) {
+            Column (grow: 0.0, width: Dimension::percent(46), min_width: 0, min_height: 0) {
                 game_rows (state, metrics)
             }
             Column (
-                grow: 2.0,
-                width: Dimension::percent(40),
+                grow: 1.0,
+                width: Dimension::percent(54),
                 min_width: 0,
                 min_height: 0,
                 row_gap: metrics.gap
             ) {
-                preview (metrics)
+                if ${ state.platforms() } {
+                    Column (grow: 1.0, min_height: 0, bg_color: PANEL) {
+                        walk ${ std::iter::once(state.selected_platform()) } with platform by platform {
+                            console (platform)
+                        }
+                    }
+                } else {
+                    preview (state, metrics)
+                }
                 preview_label (state, metrics)
             }
         }
@@ -180,12 +190,12 @@ pub(super) fn games(state: model!(DisplayState), metrics: Metrics) -> Entity {
 #[compose]
 fn preview_label(state: model!(DisplayState), metrics: Metrics) -> Entity {
     let title = move || {
-        let selected = state.selected();
+        let selected = state.library_selection();
         state
             .entries()
             .entries()
             .into_iter()
-            .find(|(_, row)| Some(row.index()) == selected)
+            .find(|(_, row)| row.index() == selected)
             .map(|(_, row)| row.label(true))
             .unwrap_or_default()
     };
@@ -196,10 +206,10 @@ fn preview_label(state: model!(DisplayState), metrics: Metrics) -> Entity {
             height: Dimension::Content,
             min_width: 0,
             shrink: 0.0,
-            font: font(metrics.body),
-            font_size: metrics.body,
+            font: font(metrics.title),
+            font_size: metrics.title,
             text_color: FOREGROUND,
-            paragraph: paragraph(Center, 3)
+            paragraph: paragraph(Center, 2)
         ) [
             FONT_PAINT,
         ]
@@ -271,40 +281,8 @@ fn row_label(row: model!(Row), size: u16, title: bool) -> Entity {
 fn platform_icon(row: model!(Row)) -> Entity {
     ui! {
         View (width: 24, height: 24, shrink: 0.0) {
-            match ${ row.icon() } {
-                1 => {
-                    Image (
-                        src: path!(
-                            M 5 1 H 19 V 23 H 5 Z M 7 4 V 12 H 17 V 4 Z M 8 15 V 17 H 6 V 19 H 8 V 21 H 10 V
-                            19 H 12 V 17 H 10 V 15 Z M 14 16 V 18 H 16 V 16 Z
-                        ),
-                        width: 24,
-                        height: 24,
-                        color: ACCENT
-                    )
-                }
-                2 => {
-                    Image (
-                        src: path!(
-                            M 5 1 H 19 V 5 H 17 V 14 H 21 V 23 H 3 V 14 H 7 V 5 H 5 Z M 9 5 V 12 H 15 V 5 Z M
-                            7 16 V 18 H 9 V 16 Z M 13 16 V 18 H 17 V 16 Z
-                        ),
-                        width: 24,
-                        height: 24,
-                        color: ACCENT
-                    )
-                }
-                _ => {
-                    Image (
-                        src: path!(
-                            M 3 5 H 21 V 19 H 3 Z M 6 8 V 10 H 4 V 12 H 6 V 14 H 8 V 12 H 10 V 10 H 8 V 8 Z M
-                            14 9 V 12 H 17 V 9 Z M 18 13 V 16 H 21 V 13 Z
-                        ),
-                        width: 24,
-                        height: 24,
-                        color: ACCENT
-                    )
-                }
+            walk ${ std::iter::once(row.platform()) } with platform by platform {
+                console (platform)
             }
         }
     }
@@ -322,6 +300,7 @@ fn list_row(
     let accent_index = item.clone();
     let available = item.clone();
     let marker = item.clone();
+    let favorite = item.clone();
     ui! {
         Column (
             grow: 1.0,
@@ -362,6 +341,19 @@ fn list_row(
                 Column (grow: 1.0, min_width: 0, justify: JustifyContent::Center) {
                     row_label (item.clone(), metrics.row_title, true)
                     row_label (item.clone(), metrics.row_detail, false)
+                }
+                if ${ !has_signal && favorite.favorite() } {
+                    Image (
+                        src: path!(
+                            M 8 0 H 12 V 4 H 20 V 8 H 16 V 12 H 18 V 20 H 12 V 16 H 8 V 20 H 2 V 12 H 4 V 8 H
+                            0 V 4 H 8 Z
+                        ),
+                        viewbox: 20,
+                        width: 12,
+                        height: 12,
+                        shrink: 0.0,
+                        color: WARNING
+                    )
                 }
                 if has_signal {
                     row_signal (state, item, metrics)

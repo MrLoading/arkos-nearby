@@ -59,6 +59,10 @@ pub struct RoomRow {
 #[serde(deny_unknown_fields)]
 pub struct View {
     #[serde(default)]
+    pub library: LibraryView,
+    #[serde(default)]
+    pub platforms: bool,
+    #[serde(default)]
     pub lobby: bool,
     #[serde(default)]
     pub current_game: bool,
@@ -122,6 +126,8 @@ pub struct NetworkPeer {
 #[serde(deny_unknown_fields)]
 pub struct GameRow {
     #[serde(default)]
+    pub favorite: bool,
+    #[serde(default)]
     pub icon: String,
     #[serde(default = "available")]
     pub available: bool,
@@ -135,6 +141,7 @@ pub struct GameRow {
 impl Default for GameRow {
     fn default() -> Self {
         Self {
+            favorite: false,
             icon: String::new(),
             available: true,
             key: String::new(),
@@ -173,6 +180,29 @@ pub enum Action {
     Refresh,
     PageUp,
     PageDown,
+    Auxiliary,
+    Start,
     #[serde(skip)]
     Theme,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum LibraryKind {
+    Platforms,
+    #[default]
+    Directory,
+    Favorites,
+    Search,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(default, deny_unknown_fields)]
+pub struct LibraryView {
+    pub kind: LibraryKind,
+    pub query: String,
+    pub keyboard: bool,
+    pub key_selected: usize,
+    pub row_selected: usize,
+    pub sort: String,
 }

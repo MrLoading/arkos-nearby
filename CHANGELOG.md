@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-10-17
+
+- Preserve game library contents while returning to the previous page.
+- Open the game library faster and keep platform counts visible during background updates.
+- Add persistent favorites with horizontal cartridge cards, name/recent sorting, and cached game search by title, filename and pinyin.
+- Show distinct console illustrations, larger game previews and clearer game titles in the library.
+- Reduce frame time when expanding nearby rooms and creation controls on the home screen.
+
 ## [0.7.0] - 2026-10-17
 
 - Keep FN + X exclusive to Nearby Multiplayer while preserving the home menu's standalone X action.

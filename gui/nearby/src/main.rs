@@ -355,7 +355,16 @@ fn live() -> Result<(), String> {
                 return Err(format!("Framebuffer pwrite: {error}"));
             }
         }
-        for action in terminal.poll().map_err(|e| e.to_string())? {
+        for mut action in terminal.poll().map_err(|e| e.to_string())? {
+            let library = view
+                .as_ref()
+                .is_some_and(|view| view.page == model::Page::Games);
+            if action == model::Action::Theme && library {
+                action = model::Action::Auxiliary;
+            }
+            if action == model::Action::Start && !library {
+                action = model::Action::Confirm;
+            }
             if matches!(action, model::Action::Theme) {
                 if let Some(scene) = scene.as_mut() {
                     render::cycle_theme(&mut app, scene)?;
@@ -370,8 +379,10 @@ fn live() -> Result<(), String> {
                     _ => {}
                 }
             }
-            if matches!(action, model::Action::Confirm | model::Action::Refresh)
-                && let Some(scene) = scene.as_ref()
+            if matches!(
+                action,
+                model::Action::Confirm | model::Action::Refresh | model::Action::Auxiliary
+            ) && let Some(scene) = scene.as_ref()
             {
                 scene.press(render::now(&app));
             }
