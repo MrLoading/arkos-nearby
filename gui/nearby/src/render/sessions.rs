@@ -47,9 +47,9 @@ pub(super) fn host(state: model!(DisplayState), metrics: Metrics) -> Entity {
                 shadow (metrics)
             }
             Column (
-                height: if metrics.compact { 37 } else { 54 },
+                height: metrics.action_height(),
                 shrink: 0.0,
-                transform: ${ state.motion().card_transform(0) }
+                transform: ${ state.card_motion().card_transform(0) }
             ) {
                 Column (
                     grow: 1.0,
@@ -77,7 +77,7 @@ pub(super) fn network_panel(state: model!(DisplayState), metrics: Metrics) -> En
                 Column (
                     grow: 1.0,
                     min_height: 0,
-                    padding: Padding::all(if metrics.compact { 4 } else { 8 }),
+                    padding: Padding::all(metrics.gap),
                     bg_color: PANEL,
                     justify: JustifyContent::Center,
                     row_gap: metrics.gap
@@ -114,9 +114,9 @@ pub(super) fn network_panel(state: model!(DisplayState), metrics: Metrics) -> En
                 shadow (metrics)
             }
             Column (
-                height: if metrics.compact { 37 } else { 54 },
+                height: metrics.action_height(),
                 shrink: 0.0,
-                transform: ${ state.motion().card_transform(0) }
+                transform: ${ state.card_motion().card_transform(0) }
             ) {
                 Column (
                     grow: 1.0,
@@ -137,11 +137,13 @@ pub(super) fn network_panel(state: model!(DisplayState), metrics: Metrics) -> En
 #[compose]
 fn network_devices(rows: &[crate::model::NetworkPeer], metrics: Metrics) -> Entity {
     ui! {
-        Column (grow: 1.0, min_height: 0, justify: JustifyContent::Center) {
+        Column (grow: 1.0, min_height: 0, justify: JustifyContent::Center, row_gap: metrics.gap) {
             walk rows.iter() with device {
                 Row (
-                    height: if metrics.compact { 18 } else { 22 },
-                    shrink: 0.0,
+                    height: metrics.device_row_height(),
+                    shrink: 1.0,
+                    min_height: i32::from(metrics.body) + LABEL_LEADING,
+                    bg_color: BACKGROUND,
                     align: AlignItems::Center,
                     column_gap: metrics.gap
                 ) {
@@ -174,7 +176,6 @@ fn network_devices(rows: &[crate::model::NetworkPeer], metrics: Metrics) -> Enti
                         super::cache::GpuLayerCache,
                     ]
                 }
-                View (height: 1, shrink: 0.0, bg_color: DIVIDER)
             }
         }
     }

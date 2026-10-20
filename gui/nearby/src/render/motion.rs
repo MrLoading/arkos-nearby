@@ -52,6 +52,7 @@ use timing::SETTLED_MS;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct Frame {
+    pub external_actor: bool,
     pub page: Page,
     pub phase: Phase,
     pub selected: Option<usize>,
@@ -76,6 +77,7 @@ pub(super) struct Frame {
 impl Default for Frame {
     fn default() -> Self {
         Self {
+            external_actor: false,
             page: Page::Choice,
             phase: Phase::Idle,
             selected: None,
@@ -270,10 +272,7 @@ impl Timeline {
             self.press_at = Some(now);
         }
         self.walker.target(
-            if view.page == Page::Games && view.library.kind == crate::model::LibraryKind::Favorites
-            {
-                Fixed::from_ratio(1, 6) + Fixed::from_ratio(selected.unwrap_or(0).min(2) as i32, 3)
-            } else if selected == Some(1) {
+            if selected == Some(1) {
                 anchors::CHOICE_RIGHT
             } else {
                 anchors::CHOICE_LEFT
@@ -307,6 +306,7 @@ impl Timeline {
         self.guest
             .target(guest, now, !continues_session && !entering);
         Frame {
+            external_actor: false,
             page: view.page,
             phase: copy::phase(view),
             selected,
@@ -347,6 +347,17 @@ pub(super) fn recoil(age: u16) -> i32 {
 }
 
 impl Frame {
+    pub(super) fn settled(self) -> bool {
+        self.selection >= SETTLED_MS
+            && self.phase_age >= SETTLED_MS
+            && self.pulse >= timing::FOCUS_PULSE_MS
+            && self.press >= timing::PRESS_FADE_MS
+            && self.wave.is_none()
+            && !self.walking
+            && !self.host_walking
+            && !self.guest_walking
+    }
+
     pub(super) fn expansion(self) -> (Fixed, Fixed) {
         let p = timing::progress(self.pulse, timing::FOCUS_PULSE_MS);
         let amount = 16.0 * p.powi(2) * (1.0 - p).powi(2);
@@ -379,6 +390,25 @@ impl Frame {
 }
 
 impl Frame {
+    pub(super) fn cards(self) -> Self {
+        Self {
+            page: self.page,
+            selected: self.selected,
+            selection: self.selection.min(timing::HOP_MS),
+            phase_age: self.phase_age.min(timing::HOP_MS),
+            press: self.press.min(timing::PRESS_MS),
+            ..Self::default()
+        }
+    }
+
+    pub(super) fn cards_settled(self) -> bool {
+        self.selected.is_none()
+            || (self.selection >= timing::HOP_MS
+                && (!matches!(self.page, Page::Host | Page::Joined)
+                    || self.phase_age >= timing::HOP_MS)
+                && self.press >= timing::PRESS_MS)
+    }
+
     pub(super) fn choice(self) -> Self {
         Self {
             selected: self.selected,
@@ -430,6 +460,45 @@ impl Frame {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn card_projection_preserves_pixels_and_excludes_unrelated_activity() {
+        for page in [Page::Games, Page::Choice, Page::Host, Page::Joined] {
+            for age in 0..=SETTLED_MS {
+                let frame = Frame {
+                    page,
+                    selected: Some(0),
+                    selection: age,
+                    phase_age: age / 2,
+                    press: age / 3,
+                    wave: Some(age),
+                    walking: true,
+                    ..Frame::default()
+                };
+                let cards = frame.cards();
+                for index in [0, 1] {
+                    assert_eq!(cards.card_transform(index), frame.card_transform(index));
+                    assert_eq!(cards.card_color(index), frame.card_color(index));
+                }
+                if cards.cards_settled() {
+                    assert_eq!(cards.card_transform(0), Transform::IDENTITY);
+                    assert_eq!(cards.card_color(0), PANEL);
+                }
+            }
+        }
+        let settled = Frame {
+            selected: Some(0),
+            ..Frame::default()
+        };
+        let loading = Frame {
+            wave: Some(32),
+            walking: true,
+            ..settled
+        };
+        assert_eq!(settled.cards(), loading.cards());
+        assert!(loading.cards_settled());
+        assert!(!loading.settled());
+    }
 
     #[test]
     fn travel_retargets_continuously_and_finishes_inside_normalized_bounds() {

@@ -44,6 +44,24 @@ pub struct Index {
 }
 
 impl Index {
+    pub(super) fn recent(&self, times: &BTreeMap<String, u64>) -> Vec<Entry> {
+        let mut entries: Vec<_> = self
+            .records
+            .iter()
+            .filter(|record| {
+                !record.hidden && !record.entry.directory && times.contains_key(&record.entry.key())
+            })
+            .map(|record| record.entry.clone())
+            .collect();
+        entries.sort_by_key(|entry| {
+            (
+                std::cmp::Reverse(times.get(&entry.key()).copied().unwrap_or(0)),
+                entry.name.clone(),
+            )
+        });
+        entries.truncate(100);
+        entries
+    }
     pub(super) fn cached(path: &Path, roots: &[PathBuf], platforms: &[Entry]) -> Option<Arc<Self>> {
         store::load(path, roots, platforms)
     }
@@ -146,7 +164,8 @@ impl Index {
         let terms: Vec<_> = query.split_whitespace().collect();
         let matches = |id: &usize| {
             !self.records[*id].hidden
-                && !self.records[*id].entry.core.is_empty()
+                && (!self.records[*id].entry.core.is_empty()
+                    || !self.records[*id].entry.extensions.is_empty())
                 && terms
                     .iter()
                     .all(|term| self.records[*id].search.contains(term))
@@ -202,6 +221,39 @@ fn aliases(entry: &Entry) -> String {
 }
 
 impl IndexJob {
+    pub fn launcher() -> crate::Result<Self> {
+        let (roots, multiplayer) = super::local_platforms()?;
+        let platforms = crate::launcher::recipes::load()?
+            .into_iter()
+            .filter_map(|system| {
+                let path = system.path.canonicalize().ok()?;
+                if !roots.iter().any(|root| path.starts_with(root)) || !path.is_dir() {
+                    return None;
+                }
+                let compatible = multiplayer.iter().find(|entry| entry.path == path);
+                Some(Entry {
+                    path,
+                    name: system.title,
+                    directory: true,
+                    frontend: compatible.map(|e| e.frontend.clone()).unwrap_or_default(),
+                    core: compatible.map(|e| e.core.clone()).unwrap_or_default(),
+                    platform: compatible
+                        .map(|entry| entry.platform.clone())
+                        .unwrap_or(system.name),
+                    count: 0,
+                    image: None,
+                    extensions: system.extensions,
+                })
+            })
+            .collect();
+        Ok(Self {
+            roots,
+            platforms,
+            cache: Path::new(crate::context::INSTALL).join("launcher-index.json"),
+            seed: None,
+        })
+    }
+
     pub fn local() -> crate::Result<Self> {
         let (roots, platforms) = super::local_platforms()?;
         Ok(Self {
@@ -268,7 +320,7 @@ impl IndexJob {
                     .filter(|dir| dir.current(&directory));
                 let Some(dir) = cached
                     .cloned()
-                    .or_else(|| Directory::read(&directory, &platform.path, &self.roots))
+                    .or_else(|| Directory::read(&directory, platform, &self.roots))
                 else {
                     index.complete = false;
                     continue;

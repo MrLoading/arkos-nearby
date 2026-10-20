@@ -9,20 +9,24 @@ enum Key {
 }
 
 #[derive(Clone, Copy)]
-pub(super) struct TextChanged;
+pub(super) struct TextChanged(bool);
 
 impl TextChanged {
-    fn contains(self, _: Self) -> bool {
-        true
+    fn contains(self, other: Self) -> bool {
+        self.0 && other.0
     }
 }
 
-#[model(change = TextChanged, watch(text = TextChanged))]
+#[model(change = TextChanged, watch(text = TextChanged(true)))]
 pub(super) struct Row {
     key: Key,
     name: String,
     detail: String,
     room: bool,
+    artwork: String,
+    #[observe]
+    pub artwork_token: Option<u64>,
+    pub cover_bounds: model!(owned super::artwork::CoverBounds),
     #[observe]
     pub index: usize,
     #[observe]
@@ -41,6 +45,15 @@ pub(super) struct Row {
 
 #[model]
 impl Row {
+    pub fn artwork(&self) -> String {
+        self.artwork.clone()
+    }
+
+    pub fn set_artwork_token(&mut self, token: Option<u64>) -> TextChanged {
+        self.artwork_token = token;
+        TextChanged(false)
+    }
+
     fn text_value(&self, title: bool) -> String {
         if title {
             self.name.clone()
@@ -68,6 +81,9 @@ impl Row {
             name: data.name.clone(),
             detail: data.detail.clone(),
             room: true,
+            artwork: String::new(),
+            artwork_token: None,
+            cover_bounds: super::artwork::CoverBounds::default().into(),
             strength: data.signal,
             available: data.available,
             directory: false,
@@ -83,6 +99,9 @@ impl Row {
             name: data.name.clone(),
             detail: data.detail.clone(),
             room: false,
+            artwork: data.artwork.clone(),
+            artwork_token: None,
+            cover_bounds: super::artwork::CoverBounds::default().into(),
             strength: 0,
             available: data.available,
             directory: data.directory,
@@ -117,7 +136,13 @@ pub(super) fn reconcile(list: &mut ModelList<Row>, mut rows: Vec<Row>, revision:
     list.reconcile(
         rows,
         |row| row.key.clone(),
-        |current, incoming| *current = incoming,
+        |current, mut incoming| {
+            std::mem::swap(&mut current.cover_bounds, &mut incoming.cover_bounds);
+            if current.artwork == incoming.artwork {
+                incoming.artwork_token = current.artwork_token;
+            }
+            *current = incoming;
+        },
     )
     .unwrap_or_else(|failure| panic!("Invalid visible row collection: {:?}", failure.error()));
 }

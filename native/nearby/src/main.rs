@@ -16,7 +16,7 @@ fn run(args: &[String]) -> Result<i32> {
         }
         Some("--help") | None => {
             println!(
-                "arkos-nearby install [--interactive]\narkos-nearby uninstall\narkos-nearby update RELEASE_PATH\narkos-nearby doctor\narkos-nearby release-info\narkos-nearby identity show|reset|name NAME\narkos-nearby friends [forget DEVICE_ID]\narkos-nearby menu --frontend <retroarch|retroarch32> -- <launch args>\narkos-nearby action <name> <context.json> <payload.json>\narkos-nearby status\narkos-nearby network <status|scan|create|join|approve|detach|cancel> [JSON]\narkos-nearby manual\nWorker modes: worker, serve, game, game-recover, recover <session-id>"
+                "arkos-nearby install [--interactive]\narkos-nearby uninstall\narkos-nearby update RELEASE_PATH\narkos-nearby doctor\narkos-nearby release-info\narkos-nearby identity show|reset|name NAME\narkos-nearby friends [forget DEVICE_ID]\narkos-nearby menu --frontend <retroarch|retroarch32> -- <launch args>\narkos-nearby action <name> <context.json> <payload.json>\narkos-nearby status\narkos-nearby network <status|scan|create|join|approve|detach|cancel> [JSON]\narkos-nearby manual\narkos-nearby launcher\nWorker modes: worker, serve, game, game-recover, recover <session-id>"
             );
             Ok(0)
         }
@@ -54,6 +54,18 @@ fn run(args: &[String]) -> Result<i32> {
             Ok(if facts.problems().is_empty() { 0 } else { 2 })
         }
         Some("manual") => arkos_nearby::manual::run_manual(),
+        Some("launcher") if args.len() == 1 => {
+            arkos_nearby::home::launch()?;
+            Ok(0)
+        }
+        Some("launcher-game-end") if args.len() == 1 => {
+            arkos_nearby::launcher::recipes::finish()?;
+            Ok(0)
+        }
+        Some("launcher-open") if args.len() == 2 => {
+            arkos_nearby::home::open_launcher(args[1].parse()?)?;
+            Ok(0)
+        }
         Some("home-listen" | "home-open") if args.len() == 2 => {
             let pid = args[1].parse::<u32>()?;
             if args[0] == "home-listen" {

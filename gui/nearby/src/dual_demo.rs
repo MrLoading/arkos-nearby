@@ -2,6 +2,8 @@
 
 mod feedback;
 #[allow(dead_code)]
+mod launcher;
+#[allow(dead_code)]
 mod model;
 #[allow(dead_code)]
 mod render;

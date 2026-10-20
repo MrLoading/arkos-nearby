@@ -16,6 +16,7 @@ fn fixture() -> (PathBuf, IndexJob) {
     let root = root.canonicalize().unwrap();
     fs::create_dir(root.join("cache")).unwrap();
     let platform = Entry {
+        extensions: String::new(),
         path: root.join("nes"),
         name: "NES".into(),
         directory: true,
@@ -61,6 +62,44 @@ fn snapshots_share_identity_and_refresh_nested_inventory_and_names() {
     let third = job.clone().run();
     assert!(third.search("bomber", None).is_empty());
     assert_eq!(third.children(&root.join("nes")).unwrap().len(), 1);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn browser_visibility_tracks_nonempty_index_and_preserves_selected_identity() {
+    let (root, mut job) = fixture();
+    let mut empty = job.platforms[0].clone();
+    empty.path = root.join("empty");
+    empty.platform = "empty".into();
+    fs::create_dir(&empty.path).unwrap();
+    job.platforms.insert(0, empty.clone());
+    let mut browser = crate::catalog::Browser::with_inventory(job.clone(), true).unwrap();
+    assert!(browser.view()["entries"].as_array().unwrap().is_empty());
+    browser.indexed(job.clone().run());
+    let selected = browser.current().unwrap().key();
+    assert_eq!(browser.view()["entries"].as_array().unwrap().len(), 1);
+    assert_eq!(browser.view()["library"]["total"], 1);
+    assert_eq!(browser.view()["status"], "");
+    browser.dispatch("confirm").unwrap();
+    assert_eq!(browser.view()["entries"].as_array().unwrap().len(), 1);
+    assert!(!browser.view()["entries"][0]["directory"].as_bool().unwrap());
+    browser.dispatch("back").unwrap();
+    fs::write(empty.path.join("new.nes"), b"new").unwrap();
+    browser.indexed(job.clone().run());
+    assert_eq!(browser.current().unwrap().key(), selected);
+    assert_eq!(browser.view()["library"]["position"], 2);
+    assert_eq!(browser.view()["library"]["total"], 2);
+    fs::remove_file(root.join("nes/bomber.nes")).unwrap();
+    browser.indexed(job.run());
+    assert_eq!(browser.current().unwrap().path(), empty.path);
+    assert_eq!(browser.view()["library"]["position"], 1);
+    assert!(
+        browser.view()["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|row| row["icon"] != "favorites")
+    );
     fs::remove_dir_all(root).unwrap();
 }
 

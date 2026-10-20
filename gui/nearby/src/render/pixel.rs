@@ -3,7 +3,10 @@ use super::{
     state::DisplayState,
     style::*,
 };
-use crate::{model::Phase, theme::actor};
+use crate::{
+    model::{Page, Phase},
+    theme::actor,
+};
 use mirui::prelude::*;
 use mirui::render::{command::DrawCommand, raster::FillRule, scene::Paint};
 use mirui::types::Transform;
@@ -50,6 +53,11 @@ pub(super) struct ChoiceSprite {
 
 #[component]
 pub(super) struct WalkerSprite {
+    pub state: model!(DisplayState),
+}
+
+#[component]
+pub(super) struct ActorSprite {
     pub state: model!(DisplayState),
 }
 
@@ -438,25 +446,27 @@ impl<F: FnMut(DrawCommand<'_>)> Painter<'_, F> {
         if h >= 116 {
             self.beacon(w / 2 + shake, floor - 50, frame.wave);
         }
-        self.person(
-            host,
-            floor - 34
-                + if celebrate {
-                    motion::hop(
-                        frame.phase_age.saturating_sub(timing::HOST_HOP_DELAY_MS),
-                        7.0,
-                    )
+        if !frame.external_actor {
+            self.person(
+                host,
+                floor - 34
+                    + if celebrate {
+                        motion::hop(
+                            frame.phase_age.saturating_sub(timing::HOST_HOP_DELAY_MS),
+                            7.0,
+                        )
+                    } else {
+                        0
+                    },
+                false,
+                if frame.host_walking {
+                    frame.phase_age
                 } else {
                     0
                 },
-            false,
-            if frame.host_walking {
-                frame.phase_age
-            } else {
-                0
-            },
-            matches!(frame.phase, Phase::Leaving | Phase::Closed),
-        );
+                matches!(frame.phase, Phase::Leaving | Phase::Closed),
+            );
+        }
         if frame.visitor {
             self.person(
                 guest,
@@ -548,7 +558,11 @@ pub(super) fn walker_sprite(
     state: model!(component.state, watch(walker_motion)),
     paint: paint!(),
     theme: res!(Theme),
+    runtime: res!(super::state::DisplayRuntime),
 ) {
+    if runtime.deck.enabled() {
+        return;
+    }
     let rect = paint.rect();
     draw(
         Kind::Walker,
@@ -567,16 +581,70 @@ pub(super) fn session_sprite(
     state: model!(component.state, watch(session_motion)),
     paint: paint!(),
     theme: res!(Theme),
+    runtime: res!(super::state::DisplayRuntime),
 ) {
     let rect = paint.rect();
+    let mut frame = state.session_motion();
+    frame.external_actor = runtime.deck.enabled();
     draw(
         Kind::Session,
         rect.w.to_int(),
         rect.h.to_int(),
-        state.session_motion(),
+        frame,
         &theme,
         |command| {
             draw_in_view(paint, command);
+        },
+    );
+}
+
+#[view(component = ActorSprite, priority = 60)]
+pub(super) fn actor_sprite(
+    state: model!(component.state, watch(actor_motion)),
+    paint: paint!(),
+    theme: res!(Theme),
+) {
+    let rect = paint.rect();
+    let frame = state.actor_motion();
+    let session = matches!(frame.page, Page::Host | Page::Joined | Page::Leaving);
+    let celebrate = session
+        && (frame.ready || frame.connected)
+        && matches!(
+            frame.phase,
+            Phase::HostReady | Phase::WaitingStart | Phase::NetworkConnected
+        );
+    let hop = if celebrate {
+        motion::hop(
+            frame.phase_age.saturating_sub(timing::HOST_HOP_DELAY_MS),
+            7.0,
+        )
+    } else if session {
+        0
+    } else {
+        motion::hop(frame.selection, 4.0)
+    };
+    let mut painter = Painter {
+        theme: &theme,
+        emit: |command: DrawCommand<'_>| draw_in_view(paint, command),
+        width: rect.w.to_int(),
+        height: rect.h.to_int(),
+        unit: 1,
+    };
+    painter.person(
+        rect.w.to_int() / 2,
+        rect.h.to_int() - 38 + hop,
+        false,
+        if session && frame.host_walking {
+            frame.phase_age
+        } else if frame.walking {
+            frame.selection
+        } else {
+            0
+        },
+        if session {
+            matches!(frame.phase, Phase::Leaving | Phase::Closed)
+        } else {
+            frame.selected == Some(0)
         },
     );
 }
@@ -642,7 +710,21 @@ fn draw_in_view(paint: &mut PaintCtx<'_>, mut command: DrawCommand<'_>) {
         .transform()
         .compose(&Transform::translate(rect.x, rect.y));
     match &mut command {
-        DrawCommand::Fill { transform, .. } | DrawCommand::FillPath { transform, .. } => {
+        DrawCommand::Fill {
+            area,
+            transform,
+            quad,
+            ..
+        } => {
+            *transform = parent.compose(transform);
+            if !matches!(
+                transform.classify(),
+                mirui::types::TransformClass::Identity | mirui::types::TransformClass::Translate
+            ) {
+                *quad = Some(transform.apply_rect(*area));
+            }
+        }
+        DrawCommand::FillPath { transform, .. } => {
             *transform = parent.compose(transform);
         }
         _ => unreachable!("Pixel artwork emits fills and contours"),
@@ -818,6 +900,7 @@ pub(super) fn art(state: model!(DisplayState), kind: Stage, height: i32) -> Enti
             clip_children: true
         ) [
             scenery,
+            super::deck::ActorAnchor(kind),
         ] {
             match kind {
                 Stage :: Walker => {
@@ -843,6 +926,23 @@ pub(super) fn art(state: model!(DisplayState), kind: Stage, height: i32) -> Enti
                 }
             }
         }
+    }
+}
+
+#[compose]
+pub(super) fn backdrop(kind: Scenery) -> Entity {
+    ui! {
+        View (
+            position: Position::Absolute,
+            left: 0,
+            top: 0,
+            width: Dimension::percent(100),
+            height: Dimension::percent(100)
+        ) [
+            kind,
+            super::cache::GpuLayerCache,
+            mirui::ui::IgnoreHitTest,
+        ]
     }
 }
 

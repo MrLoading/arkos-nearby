@@ -82,9 +82,14 @@ impl Changes {
 )]
 pub(super) struct DisplayState {
     #[observe]
+    pub(super) artwork_token: Option<u64>,
+    pub(super) cover_bounds: model!(owned super::artwork::CoverBounds),
+    pub(super) shelf: model!(owned super::shelf::Shelf),
+    #[observe]
     pub(super) deck_height: Fixed,
     view: View,
     library: LibraryPresentation,
+    pub(crate) launcher: model!(owned crate::launcher::Launcher),
     pub(crate) settings: model!(owned crate::settings::Settings),
     direction: PageDirection,
     pub(super) rooms: model!(owned ModelList<Row>),
@@ -119,12 +124,18 @@ pub(super) struct DisplayState {
 
 #[model]
 impl DisplayState {
+    pub(super) fn set_artwork_token(&mut self, token: Option<u64>) -> Changes {
+        self.artwork_token = token;
+        Changes::NONE
+    }
     pub(super) fn set_deck_height(&mut self, height: Fixed) -> Changes {
         self.deck_height = height;
         Changes::NONE
     }
 
     pub(super) fn present(&mut self, view: &View) -> Changes {
+        self.launcher.present(view);
+        self.shelf.present(view);
         let mut changes = Changes::NONE;
         if view.page == Page::Games {
             changes.update(&mut self.query, view.library.query.clone(), Changes::QUERY);
@@ -213,25 +224,30 @@ impl DisplayState {
         // Both game-row routes own this collection. Retain it only when leaving
         // for another route whose empty defaults do not describe game rows.
         if matches!(view.page, Page::Games | Page::Candidates) {
+            let limit = if view.library.kind == crate::model::LibraryKind::Favorites {
+                super::shelf::MAX_VISIBLE
+            } else {
+                4
+            };
             if self
                 .library
                 .entries
                 .iter()
-                .take(4)
-                .ne(view.entries.iter().take(4))
+                .take(limit)
+                .ne(view.entries.iter().take(limit))
             {
                 self.row_revision = self.row_revision.wrapping_add(1);
                 let entries = view
                     .entries
                     .iter()
-                    .take(4)
+                    .take(limit)
                     .enumerate()
                     .map(|(i, row)| Row::game(i, row))
                     .collect();
                 rows::reconcile(&mut self.entries, entries, self.row_revision);
             }
             self.library = LibraryPresentation {
-                entries: view.entries.iter().take(4).cloned().collect(),
+                entries: view.entries.iter().take(limit).cloned().collect(),
                 detail: view.library.clone(),
                 selected: view.selected,
                 platforms: view.platforms,
@@ -365,7 +381,7 @@ impl DisplayState {
                 Some(self.view.selected.min(self.view.rooms.len() - 1))
             }
             Page::Games | Page::Candidates if !self.view.entries.is_empty() => {
-                Some(self.view.selected.min(3))
+                Some(self.view.selected.min(self.entries.len().saturating_sub(1)))
             }
             Page::Host if host_action_enabled(&self.view) => Some(0),
             Page::Joined if self.view.network_only && host_action_enabled(&self.view) => Some(0),
@@ -432,6 +448,16 @@ impl DisplayState {
     }
 
     #[observe]
+    pub(super) fn library_counter(&self) -> Option<(usize, usize)> {
+        let detail = &self.library.detail;
+        if detail.total == 0 || detail.kind == crate::model::LibraryKind::Favorites {
+            None
+        } else {
+            Some((detail.position, detail.total))
+        }
+    }
+
+    #[observe]
     pub(super) fn recent_sort(&self) -> bool {
         self.library.detail.sort == "recent"
     }
@@ -446,6 +472,11 @@ impl DisplayState {
     }
 
     #[observe]
+    pub(super) fn busy(&self) -> bool {
+        self.view.busy
+    }
+
+    #[observe]
     pub(super) fn enabled(&self) -> bool {
         host_action_enabled(&self.view)
     }
@@ -457,6 +488,11 @@ impl DisplayState {
     }
 
     #[observe]
+    pub(super) fn card_motion(&self) -> super::motion::Frame {
+        self.motion.cards()
+    }
+
+    #[observe]
     pub(super) fn choice_motion(&self) -> super::motion::Frame {
         self.motion.choice()
     }
@@ -464,6 +500,27 @@ impl DisplayState {
     #[observe]
     pub(super) fn walker_motion(&self) -> super::motion::Frame {
         self.motion.walker()
+    }
+
+    #[observe]
+    pub(super) fn actor_position(&self) -> Fixed {
+        if matches!(self.view.page, Page::Host | Page::Joined | Page::Leaving) {
+            self.motion.host
+        } else {
+            self.motion.walker
+        }
+    }
+
+    #[observe]
+    pub(super) fn actor_motion(&self) -> super::motion::Frame {
+        if matches!(self.view.page, Page::Host | Page::Joined | Page::Leaving) {
+            super::motion::Frame {
+                page: self.view.page,
+                ..self.motion.session()
+            }
+        } else {
+            self.motion.walker()
+        }
     }
 
     #[observe]
@@ -582,20 +639,51 @@ impl DisplayStateHandle {
 }
 
 pub(super) struct DisplayRuntime {
-    state: DisplayHandle,
+    pub state: DisplayHandle,
+    pub shelf: DisplayHandle,
+    pub catalog: DisplayHandle,
+    pub room: DisplayHandle,
+    pub deck: super::deck::DeckHandle,
 }
 
 pub(super) fn install<B: Surface, F: RendererFactory<B>>(app: &mut App<B, F>) {
+    let state = register(app, false);
+    let shelf = register(app, true);
+    let catalog = register(app, false);
+    let room = register(app, false);
+    let deck = app.add_model(super::deck::Deck::default()).finish();
+    app.add_system(advance_deck::system(deck.clone()));
+    app.add_system(super::cache::settled_layer::system());
+    app.add_system(selection::update::system());
+    app.add_system(super::actor::follow::system());
+    app.add_system(super::shelf::layout_shelves::system());
+    app.add_resource(DisplayRuntime {
+        state,
+        shelf,
+        catalog,
+        room,
+        deck,
+    });
+}
+
+fn register<B: Surface, F: RendererFactory<B>>(
+    app: &mut App<B, F>,
+    launcher_shelf: bool,
+) -> DisplayHandle {
     let state = app
         .add_model(DisplayState {
+            artwork_token: None,
+            cover_bounds: super::artwork::CoverBounds::default().into(),
+            shelf: super::shelf::Shelf::new(launcher_shelf).into(),
             deck_height: Fixed::ZERO,
             view: View::default(),
             library: LibraryPresentation::default(),
             query: String::new(),
+            launcher: crate::launcher::Launcher::default().into(),
             settings: crate::settings::Settings::default().into(),
             direction: PageDirection::Forward,
             rooms: ModelList::bounded(4).into(),
-            entries: ModelList::bounded(4).into(),
+            entries: ModelList::bounded(super::shelf::MAX_VISIBLE).into(),
             row_revision: 0,
             devices: Vec::new(),
             room_name: String::new(),
@@ -622,8 +710,14 @@ pub(super) fn install<B: Surface, F: RendererFactory<B>>(app: &mut App<B, F>) {
         })
         .finish();
     app.add_system(advance::system(state.clone()));
-    app.add_system(selection::update::system(state.clone()));
-    app.add_resource(DisplayRuntime { state });
+    state
+}
+
+#[system(order = Animation)]
+fn advance_deck(deck: model!(super::deck::Deck), clock: res!(optional mirui::ecs::MonoClock)) {
+    if let Some(clock) = clock {
+        deck.tick(clock.now_ns() / 1_000_000);
+    }
 }
 
 #[compose]
@@ -639,5 +733,6 @@ fn advance(
 ) {
     if let Some(clock) = clock {
         state.frame(clock.now_ns() / 1_000_000, &theme);
+        state.launcher().tick(clock.now_ns() / 1_000_000);
     }
 }

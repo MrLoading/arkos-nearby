@@ -148,6 +148,17 @@ struct Feedback {
 }
 
 fn selection(view: &View) -> Option<String> {
+    if view.launcher.enabled {
+        if !view.launcher.overlay.is_empty() {
+            return Some(format!(
+                "launcher-menu:{}:{}",
+                view.launcher.overlay, view.launcher.selected
+            ));
+        }
+        if view.launcher.navigation {
+            return Some(format!("launcher-tab:{}", view.launcher.tab));
+        }
+    }
     match view.page {
         Page::Games if view.library.keyboard => {
             Some(format!("keyboard:{}", view.library.key_selected))
@@ -183,7 +194,20 @@ impl Feedback {
             return None;
         }
         let cue = match action {
-            Action::Auxiliary | Action::Start | Action::Refresh
+            Action::Confirm if view.launcher.enabled && !view.launcher.overlay.is_empty() => view
+                .launcher
+                .items
+                .get(view.launcher.selected)
+                .filter(|item| item.enabled && !view.busy)
+                .filter(|_| {
+                    !(view.launcher.overlay_kind == "system" && view.launcher.selected == 0)
+                })
+                .map(|_| Cue::Confirm),
+            Action::Auxiliary
+            | Action::Start
+            | Action::Refresh
+            | Action::Favorite
+            | Action::LauncherHome
                 if view.page == Page::Games && !view.busy =>
             {
                 Some(Cue::Confirm)
@@ -442,6 +466,23 @@ mod tests {
         view.busy = false;
         assert_eq!(
             feedback.input(Action::Confirm, &view, 501),
+            Some(Cue::Confirm)
+        );
+        view.page = Page::Games;
+        view.launcher.enabled = true;
+        view.launcher.overlay = "Settings".into();
+        view.launcher.overlay_kind = "system".into();
+        view.launcher.items = vec![crate::model::LauncherItem {
+            name: "Theme".into(),
+            enabled: true,
+        }];
+        assert_eq!(feedback.input(Action::Confirm, &view, 1000), None);
+        view.launcher.overlay_kind.clear();
+        view.launcher.items[0].enabled = false;
+        assert_eq!(feedback.input(Action::Confirm, &view, 1001), None);
+        view.launcher.items[0].enabled = true;
+        assert_eq!(
+            feedback.input(Action::Confirm, &view, 1002),
             Some(Cue::Confirm)
         );
     }

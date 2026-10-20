@@ -69,6 +69,9 @@ fn resolve<'a>(
     targets: impl IntoIterator<Item = (Entity, &'a FocusTarget)>,
     parent: impl Fn(Entity) -> Option<Entity>,
 ) -> Option<Entity> {
+    if frame.state.launcher().blocked() {
+        return None;
+    }
     let selected = frame.state.selected();
     targets.into_iter().find_map(|(node, target)| {
         (target.active(&frame.state)
@@ -101,7 +104,7 @@ fn follow(
         if hidden {
             apply(FocusChange::Show);
         }
-    } else if !hidden {
+    } else if !hidden || current.is_some() {
         apply(FocusChange::Hide);
     }
 }
@@ -121,7 +124,10 @@ fn initialize(
     follow(target, None, false, |change| match change {
         FocusChange::Bounds(bounds) => commands.insert(node, bounds),
         FocusChange::Show => commands.remove::<Hidden>(node),
-        FocusChange::Hide => commands.insert(node, Hidden),
+        FocusChange::Hide => {
+            commands.insert(node, Hidden);
+            commands.remove::<FollowBounds>(node);
+        }
     });
 }
 
@@ -152,7 +158,10 @@ fn initialize_target(
                 |change| match change {
                     FocusChange::Bounds(bounds) => commands.insert(entity, bounds),
                     FocusChange::Show => commands.remove::<Hidden>(entity),
-                    FocusChange::Hide => commands.insert(entity, Hidden),
+                    FocusChange::Hide => {
+                        commands.insert(entity, Hidden);
+                        commands.remove::<FollowBounds>(entity);
+                    }
                 },
             );
         }
@@ -164,27 +173,44 @@ pub(super) fn target() {}
 
 #[system(order = Animation)]
 pub(super) fn update(
-    state: model!(DisplayState),
+    runtime: res!(super::state::DisplayRuntime),
     frames: query!(Entity, SelectionFrame, optional Hidden),
+    scopes: query!(super::deck::ActorScope),
     followers: query!(FollowBounds),
     targets: query!(Entity, FocusTarget),
     parents: query!(Parent),
     commands: commands!(),
 ) {
-    let page = state.page_key();
-    let Some((entity, frame, hidden)) = frames.into_iter().find(|(_, frame, _)| frame.page == page)
-    else {
-        return;
-    };
-    let target = resolve(frame, targets, |e| parents.get(e).map(|p| p.0));
-    follow(
-        target,
-        followers.get(entity),
-        hidden.is_some(),
-        |change| match change {
-            FocusChange::Bounds(bounds) => commands.insert(entity, bounds),
-            FocusChange::Show => commands.remove::<Hidden>(entity),
-            FocusChange::Hide => commands.insert(entity, Hidden),
-        },
-    );
+    let targets: Vec<_> = targets.into_iter().collect();
+    for (entity, frame, hidden) in frames {
+        let mut ancestor = Some(frame.body);
+        let mut active = true;
+        while let Some(node) = ancestor {
+            if let Some(super::deck::ActorScope::Layer(layer)) = scopes.get(node) {
+                active = *layer == runtime.deck.layer();
+                break;
+            }
+            ancestor = parents.get(node).map(|parent| parent.0);
+        }
+        let target = if active && frame.page == frame.state.page_key() {
+            resolve(frame, targets.iter().copied(), |e| {
+                parents.get(e).map(|p| p.0)
+            })
+        } else {
+            None
+        };
+        follow(
+            target,
+            followers.get(entity),
+            hidden.is_some(),
+            |change| match change {
+                FocusChange::Bounds(bounds) => commands.insert(entity, bounds),
+                FocusChange::Show => commands.remove::<Hidden>(entity),
+                FocusChange::Hide => {
+                    commands.insert(entity, Hidden);
+                    commands.remove::<FollowBounds>(entity);
+                }
+            },
+        );
+    }
 }

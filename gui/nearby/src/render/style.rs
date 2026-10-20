@@ -62,22 +62,34 @@ impl Metrics {
     }
 
     pub fn header_height(self) -> i32 {
-        self.sized(44, 52, 88)
+        self.sized(44, 52, 72)
+    }
+    pub fn launcher_header_height(self) -> i32 {
+        self.sized(44, 60, 64)
     }
     pub fn logo_size(self) -> i32 {
         self.sized(30, 30, 48)
     }
     pub fn keycap_size(self) -> i32 {
-        self.sized(20, 20, 25)
+        i32::from(self.small) + 6
     }
     pub fn footer_height(self) -> i32 {
-        self.sized(20, 20, 32)
+        self.keycap_size() + 4
+    }
+    pub fn control_gap(self) -> i32 {
+        4
+    }
+    pub fn shortcut_gap(self) -> i32 {
+        self.sized(6, 6, 12)
     }
     pub fn shadow_height(self) -> i32 {
         self.sized(3, 3, 4)
     }
     pub fn row_height(self) -> i32 {
         self.sized(40, 44, 68)
+    }
+    pub fn library_row_height(self) -> i32 {
+        self.sized(40, 48, 80)
     }
     pub fn row_min_height(self) -> i32 {
         i32::from(self.row_title + self.row_detail)
@@ -86,7 +98,16 @@ impl Metrics {
             + self.shadow_height()
     }
     pub fn row_padding(self) -> Padding {
-        Padding::all(self.sized(3, 3, 6))
+        Padding::all(self.sized(3, 4, 6))
+    }
+    pub fn preview_title_height(self) -> i32 {
+        i32::from(self.title) * 2 + LABEL_LEADING * 2
+    }
+    pub fn action_height(self) -> i32 {
+        self.sized(32, 37, 54)
+    }
+    pub fn device_row_height(self) -> i32 {
+        self.sized(22, 28, 40)
     }
     pub fn rail_width(self) -> i32 {
         self.sized(2, 2, 3)
@@ -122,9 +143,9 @@ impl Metrics {
     pub fn page_padding(self) -> Padding {
         Padding {
             top: self.sized(8, 8, 12).into(),
-            bottom: self.sized(4, 4, 8).into(),
-            left: self.sized(16, 16, 32).into(),
-            right: self.sized(16, 16, 32).into(),
+            bottom: 4.into(),
+            left: self.sized(16, 16, 24).into(),
+            right: self.sized(16, 16, 24).into(),
         }
     }
 

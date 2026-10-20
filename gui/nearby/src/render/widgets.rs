@@ -32,6 +32,24 @@ where
     C: Fn() -> ColorToken + 'static,
 {
     ui! {
+        text_block (content, color, size, align, leading, 1)
+    }
+}
+
+#[compose]
+pub(super) fn text_block<T, C>(
+    content: T,
+    color: C,
+    size: u16,
+    align: TextAlign,
+    leading: i32,
+    lines: u16,
+) -> Entity
+where
+    T: Fn() -> String + 'static,
+    C: Fn() -> ColorToken + 'static,
+{
+    ui! {
         Text (
             text: ${ content() },
             width: Dimension::percent(100),
@@ -41,7 +59,7 @@ where
             font: font(size),
             font_size: size,
             text_color: ${ color() },
-            paragraph: paragraph(align, 1),
+            paragraph: paragraph(align, lines),
             clip_children: true
         ) [
             FONT_PAINT,
@@ -107,18 +125,50 @@ pub(super) fn guidance(state: model!(DisplayState), metrics: Metrics) -> Entity 
 }
 
 #[compose]
-pub(super) fn keycap(value: &str, metrics: Metrics) -> Entity {
+pub(super) fn control_key(key: &str, metrics: Metrics, primary: bool) -> Entity {
     ui! {
         Text (
-            value.to_owned(),
-            width: metrics.keycap_size(),
+            key.to_owned(),
+            width: Dimension::Content,
+            min_width: metrics.keycap_size(),
             height: metrics.keycap_size(),
             shrink: 0.0,
-            bg_color: PANEL,
+            padding: Padding {
+                left: metrics.control_gap().into(),
+                right: metrics.control_gap().into(),
+                ..Default::default()
+            },
+            bg_color: if primary { ACCENT } else { PANEL },
             font: font(metrics.small),
             font_size: metrics.small,
-            text_color: SECONDARY,
+            text_color: if primary { ON_ACCENT } else { FOREGROUND },
             paragraph: paragraph(Center, 1)
+        ) [
+            FONT_PAINT,
+        ]
+    }
+}
+
+#[compose]
+pub(super) fn control_label<T>(content: T, metrics: Metrics) -> Entity
+where
+    T: Fn() -> String + 'static,
+{
+    ui! {
+        Text (
+            text: ${ content() },
+            width: Dimension::Content,
+            min_width: 0,
+            padding: Padding {
+                right: metrics.shortcut_gap().into(),
+                ..Default::default()
+            },
+            max_width: if metrics.compact { 130 } else { 210 },
+            height: Dimension::Content,
+            font: font(metrics.small),
+            font_size: metrics.small,
+            text_color: FOREGROUND,
+            paragraph: paragraph(TextAlign::Start, 1)
         ) [
             FONT_PAINT,
         ]

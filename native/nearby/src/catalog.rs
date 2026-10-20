@@ -12,6 +12,7 @@ mod index;
 pub(crate) mod library;
 pub(crate) mod matching;
 mod metadata;
+pub(crate) mod shelf;
 mod store;
 pub use index::{Index, IndexJob, SearchJob, SearchResult};
 
@@ -25,11 +26,91 @@ pub struct Entry {
     platform: String,
     count: usize,
     image: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    extensions: String,
 }
 
 #[cfg(test)]
 mod library_tests {
     use super::*;
+
+    #[test]
+    fn visible_favorites_export_each_games_local_artwork() {
+        let mut browser = Browser::with_inventory(IndexJob::local().unwrap(), true).unwrap();
+        browser.levels.push(Level {
+            kind: LibraryPage::Favorites,
+            path: None,
+            entries: (0..5)
+                .map(|i| Entry {
+                    path: PathBuf::from(format!("/roms/nes/{i}/game.nes")),
+                    image: (i != 4).then(|| PathBuf::from(format!("/roms/nes/{i}/image.png"))),
+                    name: format!("Game {i}"),
+                    directory: false,
+                    frontend: "retroarch".into(),
+                    core: "fceumm".into(),
+                    platform: "nes".into(),
+                    count: 0,
+                    extensions: String::new(),
+                })
+                .collect(),
+            selected: 0,
+        });
+        let first = browser.view();
+        let rows = first["entries"].as_array().unwrap();
+        assert_eq!(rows.len(), 3);
+        for (i, row) in rows.iter().enumerate() {
+            assert_eq!(row["artwork"], format!("/roms/nes/{i}/image.png"));
+        }
+        browser.levels.last_mut().unwrap().selected = 4;
+        let last = browser.view();
+        let rows = last["entries"].as_array().unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0]["artwork"], "/roms/nes/3/image.png");
+        assert_eq!(rows[1]["artwork"], "");
+        let selected = browser.current().unwrap().key();
+        for (columns, rows) in [(3, 2), (2, 1), (4, 2), (3, 1)] {
+            let grid = serde_json::from_value(json!({"columns":columns,"rows":rows})).unwrap();
+            browser.shelf_layout(grid);
+            assert_eq!(browser.current().unwrap().key(), selected);
+            let view = browser.view();
+            let visible = view["entries"].as_array().unwrap();
+            let slot = view["selected"].as_u64().unwrap() as usize;
+            assert_eq!(visible[slot]["key"], selected);
+            assert!(visible.len() <= columns * rows);
+            browser.dispatch("up").unwrap();
+            browser.dispatch("down").unwrap();
+            assert_eq!(browser.current().unwrap().key(), selected);
+        }
+    }
+
+    #[test]
+    fn launcher_library_link_is_stable_and_never_a_game() {
+        let mut browser = Browser::with_inventory(IndexJob::local().unwrap(), true).unwrap();
+        browser.levels.push(Level {
+            kind: LibraryPage::Favorites,
+            path: None,
+            entries: Vec::new(),
+            selected: 0,
+        });
+        browser.personal.favorites.clear();
+        browser.favorites();
+        let link = browser.current().unwrap();
+        assert!(link.library_link());
+        assert!(!link.netplay());
+        assert!(browser.game().is_none());
+        assert!(browser.dispatch("confirm").unwrap().is_none());
+        let mut game = link.clone();
+        game.path = PathBuf::from("/roms/nes/local.nes");
+        game.directory = false;
+        game.platform = "nes".into();
+        browser.personal.favorites.insert(game.key(), game);
+        browser.favorites();
+        assert_eq!(browser.current().unwrap().key(), link.key());
+        assert!(browser.game().is_none());
+        browser.personal.favorites.clear();
+        browser.favorites();
+        assert_eq!(browser.current().unwrap().key(), link.key());
+    }
 
     #[test]
     fn query_cache_follows_snapshot_identity_and_rejects_replaced_snapshots() {
@@ -102,6 +183,35 @@ mod library_tests {
     }
 }
 impl Entry {
+    pub fn library_link(&self) -> bool {
+        self.platform == "library" && self.directory
+    }
+    pub fn key(&self) -> String {
+        library::key(&self.path)
+    }
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+    pub fn directory(&self) -> bool {
+        self.directory
+    }
+    pub fn netplay(&self) -> bool {
+        !self.core.is_empty()
+    }
+    fn accepts(&self, path: &Path) -> bool {
+        if self.extensions.is_empty() {
+            return game_file(path);
+        }
+        path.extension().is_some_and(|ext| {
+            self.extensions.split_whitespace().any(|e| {
+                e.trim_start_matches('.')
+                    .eq_ignore_ascii_case(&ext.to_string_lossy())
+            })
+        })
+    }
     pub fn prepare(&self) -> Result<Context> {
         let library = context::config(&self.frontend)?
             .join("cores")
@@ -141,6 +251,8 @@ struct Level {
 }
 
 pub struct Browser {
+    shelf: shelf::Grid,
+    launcher: bool,
     roots: Vec<PathBuf>,
     levels: Vec<Level>,
     pub busy: bool,
@@ -211,6 +323,11 @@ fn game_file(path: &Path) -> bool {
 }
 
 impl Browser {
+    pub fn shelf_layout(&mut self, grid: shelf::Grid) {
+        if grid.valid() {
+            self.shelf = grid;
+        }
+    }
     pub fn reopen(&mut self) {
         self.indexing = true;
         self.input_epoch = crate::system::monotonic();
@@ -222,28 +339,76 @@ impl Browser {
         if self.kind() == LibraryPage::Favorites {
             self.favorites();
         }
+        self.refresh_platforms();
+        self.refresh_recent();
         if self.kind() == LibraryPage::Search {
             self.changed_query();
         }
     }
     pub fn new() -> Result<Self> {
-        let inventory = IndexJob::local()?;
-        let roots = inventory.roots.clone();
-        let mut entries: Vec<_> = inventory
-            .platforms
-            .iter()
-            .filter(|entry| !entry.core.is_empty())
+        Self::with_inventory(IndexJob::local()?, false)
+    }
+    pub fn launcher(favorites: bool) -> Result<Self> {
+        let mut browser = Self::with_inventory(IndexJob::launcher()?, true)?;
+        if favorites {
+            browser.levels.push(Level {
+                kind: LibraryPage::Favorites,
+                path: None,
+                entries: Vec::new(),
+                selected: 0,
+            });
+            browser.favorites();
+        }
+        Ok(browser)
+    }
+    pub fn current(&self) -> Option<Entry> {
+        self.levels
+            .last()?
+            .entries
+            .get(self.levels.last()?.selected)
             .cloned()
-            .collect();
+    }
+    pub fn game(&self) -> Option<Entry> {
+        self.current().filter(|e| {
+            !e.directory
+                && !(self.kind() == LibraryPage::Search
+                    && (self.keyboard || self.search_running || self.query_due.is_some()))
+        })
+    }
+    pub fn root(&self) -> bool {
+        self.levels.len() == 1
+    }
+    pub fn editing(&self) -> bool {
+        self.kind() == LibraryPage::Search && self.keyboard
+    }
+    pub fn searching(&self) -> bool {
+        self.kind() == LibraryPage::Search
+    }
+    pub fn is_favorite(&self) -> bool {
+        self.game()
+            .is_some_and(|entry| self.personal.favorites.contains_key(&entry.key()))
+    }
+    pub fn message(&mut self, value: impl Into<String>) {
+        self.status = value.into();
+    }
+    pub fn select_key(&mut self, key: &str) {
+        if let Some(level) = self.levels.last_mut() {
+            if let Some(index) = level.entries.iter().position(|entry| entry.key() == key) {
+                level.selected = index;
+            }
+        }
+    }
+    fn with_inventory(inventory: IndexJob, launcher: bool) -> Result<Self> {
+        let roots = inventory.roots.clone();
+        let mut entries = Vec::new();
         let personal = library::Library::load(Path::new(context::INSTALL));
         let status = if personal.is_err() {
             "收藏记录无法读取，原文件已保留。".into()
         } else {
             String::new()
         };
-        entries.insert(
-            0,
-            Entry {
+        if !launcher {
+            entries.push(Entry {
                 path: PathBuf::new(),
                 name: "收藏夹".into(),
                 directory: true,
@@ -252,9 +417,13 @@ impl Browser {
                 platform: "favorites".into(),
                 count: 0,
                 image: None,
-            },
-        );
+                extensions: String::new(),
+            });
+        }
+        // Platform visibility is derived from the index, including on a cold start.
         let mut browser = Self {
+            shelf: shelf::Grid::default(),
+            launcher,
             roots,
             levels: vec![Level {
                 kind: LibraryPage::Platforms,
@@ -305,6 +474,7 @@ impl Browser {
         }
         self.index = Some(index.clone());
         self.queries = index::Queries::default();
+        self.refresh_platforms();
         for level in &mut self.levels {
             if let Some(directory) = &level.path {
                 if let Some(entries) = index.children(&directory.path) {
@@ -333,9 +503,54 @@ impl Browser {
         if self.kind() == LibraryPage::Favorites {
             self.favorites();
         }
+        self.refresh_recent();
         if self.kind() == LibraryPage::Search {
             self.changed_query();
         }
+    }
+
+    fn refresh_platforms(&mut self) {
+        let Some(index) = &self.index else { return };
+        let Some(root) = self.levels.first_mut() else {
+            return;
+        };
+        let selected = root.entries.get(root.selected).map(Entry::key);
+        root.entries.retain(|entry| entry.platform == "favorites");
+        let recent_count = if self.launcher {
+            index.recent(&self.personal.recent).len()
+        } else {
+            0
+        };
+        if recent_count > 0 {
+            root.entries.push(Entry {
+                path: PathBuf::new(),
+                name: "最近游玩".into(),
+                directory: true,
+                frontend: String::new(),
+                core: String::new(),
+                platform: "recent".into(),
+                count: recent_count,
+                image: None,
+                extensions: String::new(),
+            });
+        }
+        root.entries.extend(
+            self.inventory
+                .platforms
+                .iter()
+                .filter(|entry| {
+                    (self.launcher || !entry.core.is_empty())
+                        && index.counts.get(&entry.path).copied().unwrap_or(0) > 0
+                })
+                .cloned()
+                .map(|mut entry| {
+                    entry.count = index.counts[&entry.path];
+                    entry
+                }),
+        );
+        root.selected = selected
+            .and_then(|key| root.entries.iter().position(|entry| entry.key() == key))
+            .unwrap_or(root.selected.min(root.entries.len().saturating_sub(1)));
     }
 
     fn kind(&self) -> LibraryPage {
@@ -409,7 +624,13 @@ impl Browser {
             .entries
             .get(level.selected)
             .map(|entry| library::key(&entry.path));
-        let mut entries: Vec<_> = self.personal.favorites.values().cloned().collect();
+        let mut entries: Vec<_> = self
+            .personal
+            .favorites
+            .values()
+            .filter(|entry| self.launcher || entry.netplay())
+            .cloned()
+            .collect();
         if let Some(index) = &self.index {
             for entry in &mut entries {
                 if let Some(current) = index.entry(&entry.path) {
@@ -434,6 +655,19 @@ impl Browser {
                 entry.path.clone(),
             )
         });
+        if self.launcher {
+            entries.push(Entry {
+                path: PathBuf::from("nearby:library"),
+                name: "游戏库".into(),
+                directory: true,
+                frontend: String::new(),
+                core: String::new(),
+                platform: "library".into(),
+                count: 0,
+                image: None,
+                extensions: String::new(),
+            });
+        }
         level.selected = selected
             .and_then(|key| {
                 entries
@@ -442,6 +676,23 @@ impl Browser {
             })
             .unwrap_or(level.selected.min(entries.len().saturating_sub(1)));
         level.entries = entries;
+    }
+
+    fn refresh_recent(&mut self) {
+        let Some(index) = &self.index else { return };
+        for level in &mut self.levels {
+            if level
+                .path
+                .as_ref()
+                .is_some_and(|entry| entry.platform == "recent")
+            {
+                let selected = level.entries.get(level.selected).map(Entry::key);
+                level.entries = index.recent(&self.personal.recent);
+                level.selected = selected
+                    .and_then(|key| level.entries.iter().position(|entry| entry.key() == key))
+                    .unwrap_or(0);
+            }
+        }
     }
 
     fn available(&self, entry: &Entry) -> bool {
@@ -465,9 +716,8 @@ impl Browser {
             .filter_map(|entry| {
                 let path = entry.path().canonicalize().ok()?;
                 if !self.roots.iter().any(|root| path.starts_with(root))
-                    || !(path.is_dir() || game_file(&path))
+                    || !(path.is_dir() || directory.accepts(&path))
                     || path.is_dir()
-                        && !self.indexing
                         && self
                             .index
                             .as_ref()
@@ -504,6 +754,7 @@ impl Browser {
                     platform: directory.platform.clone(),
                     count,
                     image: metadata.and_then(|value| value.image.clone()),
+                    extensions: directory.extensions.clone(),
                 })
             })
             .collect();
@@ -525,7 +776,10 @@ impl Browser {
             return Ok(None);
         }
         self.status.clear();
-        if action == "auxiliary" && self.kind() == LibraryPage::Platforms {
+        if action == "auxiliary"
+            && (self.kind() == LibraryPage::Platforms
+                || self.launcher && self.kind() == LibraryPage::Directory && self.game().is_none())
+        {
             self.levels.push(Level {
                 kind: LibraryPage::Search,
                 path: None,
@@ -641,11 +895,15 @@ impl Browser {
         }
         let favorites = self.kind() == LibraryPage::Favorites;
         let level = self.levels.last_mut().ok_or("Missing game browser level")?;
+        if favorites {
+            level.selected = self
+                .shelf
+                .navigate(level.selected, level.entries.len(), action);
+        }
         let delta = match action {
+            _ if favorites => 0,
             "up" => -1,
             "down" => 1,
-            "left" if favorites => -1,
-            "right" if favorites => 1,
             "left" | "page_up" => -4,
             "right" | "page_down" => 4,
             _ => 0,
@@ -659,6 +917,20 @@ impl Browser {
             return Ok(None);
         }
         let selected = level.entries[level.selected].clone();
+        if selected.library_link() {
+            return Ok(None);
+        }
+        if selected.platform == "recent" {
+            self.levels.push(Level {
+                kind: LibraryPage::Directory,
+                path: Some(selected),
+                entries: Vec::new(),
+                selected: 0,
+            });
+            self.refresh_recent();
+            self.input_epoch = crate::system::monotonic();
+            return Ok(None);
+        }
         if selected.platform == "favorites" {
             self.levels.push(Level {
                 kind: LibraryPage::Favorites,
@@ -728,20 +1000,26 @@ impl Browser {
     pub fn view(&self) -> Value {
         let level = self.levels.last().expect("Browser always has its root");
         let visible = if self.kind() == LibraryPage::Favorites {
-            3
+            self.shelf.capacity()
         } else {
             4
         };
-        let first = level
-            .selected
-            .saturating_sub(visible - 1)
-            .min(level.entries.len().saturating_sub(visible));
+        let first = if self.kind() == LibraryPage::Favorites {
+            self.shelf.first(level.selected)
+        } else {
+            level
+                .selected
+                .saturating_sub(visible - 1)
+                .min(level.entries.len().saturating_sub(visible))
+        };
         let entries: Vec<_> = level.entries.iter().skip(first).take(visible).map(|entry| {
-            let detail = if entry.platform=="favorites" { format!("{} 款游戏",self.personal.favorites.len()) } else if entry.directory {
+            let detail = if entry.platform=="recent" {format!("{} 款游戏",entry.count)} else if entry.platform=="favorites" { format!("{} 款游戏",self.personal.favorites.len()) } else if entry.directory {
                 if self.indexing && self.index.as_ref().is_none_or(|index| !index.counts.contains_key(&entry.path)) {
                     format!("{} · 正在统计", entry.core)
+                } else if entry.core.is_empty() {
+                    format!("{} 款游戏",entry.count)
                 } else {
-                    format!("{} · {} 款游戏", entry.core, entry.count)
+                    format!("{} · {} 款", entry.core, entry.count)
                 }
             } else {
                 entry.core.clone()
@@ -749,31 +1027,11 @@ impl Browser {
             json!({
                 "key":if entry.platform=="favorites" {"favorites".into()} else {library::key(&entry.path)},
                 "favorite":self.personal.favorites.contains_key(&library::key(&entry.path)),
-                "available":!(self.kind()==LibraryPage::Search && (self.query_due.is_some() || self.search_running)) && (entry.platform=="favorites" || self.available(entry)),
+                "artwork":entry.image.as_ref().map(|path|path.to_string_lossy().into_owned()).unwrap_or_default(),
+                "available":!(self.kind()==LibraryPage::Search && (self.query_due.is_some() || self.search_running)) && (matches!(entry.platform.as_str(),"favorites"|"recent"|"library") || self.available(entry)),
                 "name":entry.name,"detail":detail,"icon":entry.platform,"directory":entry.directory
             })
         }).collect();
-        let position = format!(
-            "{} / {}",
-            if level.entries.is_empty() {
-                0
-            } else {
-                level.selected + 1
-            },
-            level.entries.len()
-        );
-        let position = if self.kind() == LibraryPage::Favorites {
-            format!(
-                "{position} · {}",
-                if self.personal.favorite_sort == library::Sort::Recent {
-                    "最近使用"
-                } else {
-                    "名称顺序"
-                }
-            )
-        } else {
-            position
-        };
         let status = if self.kind() == LibraryPage::Search
             && (self.query_due.is_some() || self.search_running)
         {
@@ -781,13 +1039,17 @@ impl Browser {
         } else if self.kind() == LibraryPage::Search && self.query.trim().is_empty() {
             "名称 / 文件名 / 拼音首字母".into()
         } else if self.kind() == LibraryPage::Favorites && level.entries.is_empty() {
-            "在游戏列表按 X，把喜欢的游戏放在这里".into()
+            if self.launcher {
+                String::new()
+            } else {
+                "在游戏列表按 X，把喜欢的游戏放在这里".into()
+            }
         } else if !self.status.is_empty() {
             self.status.clone()
         } else if self.indexing && self.index.is_none() {
-            format!("{position} · 正在整理本机游戏")
+            "正在整理本机游戏".into()
         } else {
-            position
+            String::new()
         };
         let artwork_neighbors: Vec<_> =
             [level.selected.checked_sub(1), level.selected.checked_add(1)]
@@ -799,7 +1061,7 @@ impl Browser {
                 .collect();
         json!({
             "platforms":self.kind()==LibraryPage::Platforms,
-            "library":{"kind":level.kind,"query":self.query,"keyboard":self.keyboard && self.kind()==LibraryPage::Search,"key_selected":self.key_selected,"row_selected":level.selected.saturating_sub(first),"sort":self.personal.favorite_sort},
+            "library":{"kind":level.kind,"query":self.query,"keyboard":self.keyboard && self.kind()==LibraryPage::Search,"key_selected":self.key_selected,"row_selected":level.selected.saturating_sub(first),"sort":self.personal.favorite_sort,"position":if level.entries.is_empty(){0}else{level.selected+1},"total":level.entries.len()},
             "artwork":level.entries.get(level.selected).and_then(|entry|entry.image.as_ref()).map(|path|path.to_string_lossy().into_owned()).unwrap_or_default(),
             "artwork_neighbors":artwork_neighbors,
             "page":"games","title":match self.kind() {LibraryPage::Platforms=>"选择游戏平台",LibraryPage::Favorites=>"收藏夹",LibraryPage::Search=>"搜索游戏",LibraryPage::Directory=>"选择游戏"},
@@ -867,6 +1129,7 @@ fn local_platforms() -> Result<(Vec<PathBuf>, Vec<Entry>)> {
                 platform: (*platform).into(),
                 count: 0,
                 image: None,
+                extensions: String::new(),
             });
         }
     }

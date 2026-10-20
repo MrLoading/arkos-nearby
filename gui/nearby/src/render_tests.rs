@@ -1,6 +1,693 @@
 use super::*;
 
 #[test]
+fn modal_input_and_geometry_followers_belong_to_the_active_layer() {
+    let mut app = app([640, 480]);
+    let mut home = view(Page::Games);
+    home.library.kind = crate::model::LibraryKind::Favorites;
+    home.launcher.enabled = true;
+    let mut scene = draw(&mut app, &home).unwrap();
+    paint_at(&mut app, &scene, 800);
+    let shelf_frame = app
+        .world
+        .query::<selection::SelectionFrame>()
+        .iter()
+        .find(|(_, frame)| frame.page.library == crate::model::LibraryKind::Favorites)
+        .unwrap()
+        .0;
+    let initial = app.world.get::<FollowBounds>(shelf_frame).unwrap().target;
+    let mut modal = view(Page::Mode);
+    modal.lobby = true;
+    modal.return_to_launcher = true;
+    update(&mut scene, &modal).unwrap();
+    paint_at(&mut app, &scene, 1600);
+    assert!(app.world.has::<mirui::ui::Hidden>(shelf_frame));
+    assert!(!app.world.has::<FollowBounds>(shelf_frame));
+    for (entity, _) in app.world.query::<selection::SelectionFrame>().iter() {
+        if app.world.has::<mirui::ui::Hidden>(entity) {
+            assert!(!app.world.has::<FollowBounds>(entity));
+        }
+    }
+    let background = scene.shelf.card_motion();
+    scene.press(1600);
+    paint_at(&mut app, &scene, 1616);
+    assert_eq!(scene.shelf.card_motion(), background);
+    assert_eq!(scene.room.card_motion().press, 0);
+    update(&mut scene, &home).unwrap();
+    paint_at(&mut app, &scene, 2400);
+    assert!(!app.world.has::<mirui::ui::Hidden>(shelf_frame));
+    assert_eq!(
+        app.world.get::<FollowBounds>(shelf_frame).unwrap().target,
+        initial
+    );
+}
+
+#[test]
+fn launcher_feedback_retains_shelf_geometry_and_selected_action() {
+    for size in [[480, 320], [640, 480]] {
+        let mut app = app(size);
+        let mut home = view(Page::Games);
+        home.status.clear();
+        home.library.kind = crate::model::LibraryKind::Favorites;
+        home.library.total = 6;
+        home.launcher.enabled = true;
+        home.launcher.key = home.entries[0].key.clone();
+        home.launcher_shelf = Some(Box::new(home.clone()));
+        let requests = Rc::new(std::cell::RefCell::new(Vec::new()));
+        let received = requests.clone();
+        subscribe_shelf_layout(&app, move |request| received.borrow_mut().push(*request)).unwrap();
+        let mut scene = draw(&mut app, &home).unwrap();
+        paint_at(&mut app, &scene, 320);
+        let plan = scene.shelf.shelf().plan();
+        let height = scene.deck.height();
+        let emitted = requests.borrow().len();
+        let gesture = super::launcher(&mut app);
+        let intents = Rc::new(std::cell::RefCell::new(Vec::new()));
+        let received = intents.clone();
+        gesture
+            .on_effect(move |intent: &crate::launcher::Intent| {
+                received.borrow_mut().push(intent.clone());
+            })
+            .unwrap();
+
+        for (start, cancel) in [(320, true), (1120, false)] {
+            gesture.press(start);
+            paint_at(&mut app, &scene, start + 240);
+            assert!(gesture.progress() > 0);
+            assert_eq!(
+                scene.deck.height(),
+                height,
+                "Hold feedback cannot resize the deck"
+            );
+            assert_eq!(scene.shelf.shelf().plan(), plan);
+            assert_eq!(scene.state.confirm(), "操作");
+            if cancel {
+                gesture.cancel();
+            }
+            paint_at(&mut app, &scene, start + 720);
+            gesture.release(start + 720);
+            assert_eq!(gesture.progress(), 0);
+        }
+        assert_eq!(
+            *intents.borrow(),
+            vec![crate::launcher::Intent::Game {
+                key: home.launcher.key.clone(),
+                multiplayer: true,
+            }]
+        );
+        let mut waiting = home.clone();
+        waiting.busy = true;
+        waiting.status = "正在准备联机".into();
+        waiting.launcher.key.clear();
+        update(&mut scene, &waiting).unwrap();
+        paint_at(&mut app, &scene, 2000);
+        assert!(
+            !scene.state.confirm_visible(),
+            "Preparation has no library action"
+        );
+        assert_eq!(scene.state.hint(), waiting.status);
+        assert_eq!(
+            scene.deck.height(),
+            height,
+            "Status feedback cannot resize the deck"
+        );
+        assert_eq!(scene.shelf.shelf().plan(), plan);
+        update(&mut scene, &home).unwrap();
+        paint_at(&mut app, &scene, 2200);
+        assert_eq!(scene.state.confirm(), "操作");
+        assert_eq!(scene.shelf.shelf().plan(), plan);
+        assert_eq!(
+            requests.borrow().len(),
+            emitted,
+            "Feedback cannot renegotiate the grid"
+        );
+    }
+}
+
+#[test]
+fn launcher_library_hint_requires_an_available_library_entry() {
+    let mut current = view(Page::Games);
+    current.launcher.enabled = true;
+    current.library.kind = crate::model::LibraryKind::Favorites;
+    assert_ne!(copy::confirm_text(&current), "游戏库");
+    current.entries[0].directory = true;
+    current.entries[0].icon = "library".into();
+    assert_eq!(copy::confirm_text(&current), "游戏库");
+    current.busy = true;
+    assert_eq!(copy::confirm_text(&current), "");
+    current.busy = false;
+    current.entries[0].available = false;
+    assert_ne!(copy::confirm_text(&current), "游戏库");
+    current.entries.clear();
+    assert_eq!(copy::confirm_text(&current), "");
+}
+
+#[test]
+fn adaptive_shelf_retains_grid_selection_and_models_through_library_expansion() {
+    for (size, rows) in [([480, 320], 1), ([640, 480], 2), ([800, 480], 2)] {
+        let mut app = app(size);
+        let mut current = view(Page::Games);
+        current.status.clear();
+        current.library.kind = crate::model::LibraryKind::Favorites;
+        current.library.total = 9;
+        current.launcher.enabled = true;
+        current.entries = (0..8)
+            .map(|i| crate::model::GameRow {
+                key: format!("cartridge-{i}"),
+                name: format!("游戏 {i}"),
+                icon: "nes".into(),
+                available: true,
+                ..Default::default()
+            })
+            .collect();
+        let requests = Rc::new(std::cell::RefCell::new(Vec::new()));
+        let received = requests.clone();
+        subscribe_shelf_layout(&app, move |request| received.borrow_mut().push(*request)).unwrap();
+        let mut scene = draw(&mut app, &current).unwrap();
+        paint_at(&mut app, &scene, 320);
+        let plan = scene.shelf.shelf().plan();
+        assert_eq!(plan.grid.rows, rows, "{size:?}");
+        // Apply the same bounded visible window returned by the native browser.
+        let capacity = plan.grid.columns * plan.grid.rows;
+        current.entries.truncate(capacity);
+        current.selected = capacity - 1;
+        current.library.position = capacity;
+        current.launcher.key = current.entries[current.selected].key.clone();
+        current.launcher_shelf = Some(Box::new(current.clone()));
+        update(&mut scene, &current).unwrap();
+        paint_at(&mut app, &scene, 640);
+        let ids: Vec<_> = scene.shelf.entries().entries().map(|(id, _)| id).collect();
+        let actor = app
+            .world
+            .query::<actor::ActorFrame>()
+            .iter()
+            .next()
+            .unwrap()
+            .0;
+        let target = app.world.get::<FollowBounds>(actor).unwrap().target;
+        assert_eq!(
+            app.world.get::<FocusTarget>(target).unwrap().index(),
+            current.selected
+        );
+        let original = app.world.get::<ComputedRect>(target).unwrap().0;
+        assert!(
+            original.w > original.h,
+            "{size:?}: cartridge must remain horizontal"
+        );
+        let emitted = requests.borrow().len();
+        assert_eq!(emitted, 1, "Only the active shelf publishes geometry");
+        let home = current.clone();
+        current.launcher.tab = 1;
+        current.library.kind = crate::model::LibraryKind::Platforms;
+        current.platforms = true;
+        current.selected = 0;
+        current.launcher.key.clear();
+        current.launcher_catalog = Some(Box::new(current.clone()));
+        update(&mut scene, &current).unwrap();
+        paint_at(&mut app, &scene, 1600);
+        assert_eq!(scene.deck.expansion(), Fixed::ONE);
+        assert_eq!(
+            scene.shelf.shelf().plan(),
+            plan,
+            "Compression retains logical grid geometry"
+        );
+        assert_eq!(
+            scene
+                .shelf
+                .entries()
+                .entries()
+                .map(|(id, _)| id)
+                .collect::<Vec<_>>(),
+            ids
+        );
+        update(&mut scene, &home).unwrap();
+        paint_at(&mut app, &scene, 2600);
+        assert_eq!(scene.deck.expansion(), Fixed::ZERO);
+        assert_eq!(app.world.get::<FollowBounds>(actor).unwrap().target, target);
+        assert_eq!(app.world.get::<ComputedRect>(target).unwrap().0, original);
+        assert_eq!(
+            requests.borrow().len(),
+            emitted,
+            "Motion and return cannot renegotiate the grid"
+        );
+        assert_full_frame_matches(&mut app, "Retained landscape shelf return");
+    }
+}
+
+#[test]
+fn launcher_shortcuts_and_catalog_fit_after_expanding_the_favorite_shelf() {
+    for size in [[480, 320], [640, 480], [800, 480]] {
+        let mut app = app(size);
+        let mut shelf = view(Page::Games);
+        shelf.status.clear();
+        shelf.library.kind = crate::model::LibraryKind::Favorites;
+        shelf.entries.truncate(3);
+        shelf.launcher.enabled = true;
+        shelf.launcher.key = "row-0".into();
+        shelf.launcher_shelf = Some(Box::new(shelf.clone()));
+        let mut scene = draw(&mut app, &shelf).unwrap();
+        let mut time = 0;
+        for kind in [
+            crate::model::LibraryKind::Favorites,
+            crate::model::LibraryKind::Platforms,
+            crate::model::LibraryKind::Directory,
+            crate::model::LibraryKind::Search,
+            crate::model::LibraryKind::Favorites,
+        ] {
+            let mut current = shelf.clone();
+            if kind != crate::model::LibraryKind::Favorites {
+                current.library.kind = kind;
+                current.library.keyboard = kind == crate::model::LibraryKind::Search;
+                current.platforms = kind == crate::model::LibraryKind::Platforms;
+                current.launcher.tab = 1;
+                if kind != crate::model::LibraryKind::Directory {
+                    current.launcher.key.clear();
+                }
+                current.launcher_catalog = Some(Box::new(current.clone()));
+            }
+            update(&mut scene, &current).unwrap();
+            for _ in 0..13 {
+                time += 64;
+                TIME.with(|clock| clock.set(time * 1_000_000));
+                super::paint_at(&mut app, time).unwrap();
+            }
+            let visible = |mut entity| {
+                loop {
+                    if mirui::ui::branch::is_effectively_hidden(&app.world, entity) {
+                        return false;
+                    }
+                    let Some(parent) = app.world.get::<mirui::ui::Parent>(entity) else {
+                        return true;
+                    };
+                    entity = parent.0;
+                }
+            };
+            let (footer, bounds) = app
+                .world
+                .query::<Section>()
+                .iter()
+                .find_map(|(entity, section)| {
+                    (*section == Section::Footer)
+                        .then(|| (entity, app.world.get::<ComputedRect>(entity).unwrap().0))
+                })
+                .unwrap();
+            assert!(bounds.h <= Fixed::from_int(28));
+            assert!(bounds.y + bounds.h <= Fixed::from_int(i32::from(size[1])));
+            for (entity, text) in app.world.query::<Text>().iter() {
+                if selection::contains(footer, entity, |node| {
+                    app.world
+                        .get::<mirui::ui::Parent>(node)
+                        .map(|parent| parent.0)
+                }) {
+                    if !visible(entity) {
+                        continue;
+                    }
+                    let area = app.world.get::<ComputedRect>(entity).unwrap().0;
+                    assert!(
+                        area.x >= bounds.x
+                            && area.x + area.w <= bounds.x + bounds.w
+                            && area.y >= bounds.y
+                            && area.y + area.h <= bounds.y + bounds.h,
+                        "{size:?} {kind:?}: {} escapes shortcuts",
+                        text.resolve(app.world.resource())
+                    );
+                }
+            }
+            if kind != crate::model::LibraryKind::Favorites {
+                assert_eq!(scene.deck.expansion(), Fixed::ONE);
+                let (catalog, area) = app
+                    .world
+                    .query::<deck::ActorScope>()
+                    .iter()
+                    .find_map(|(entity, scope)| {
+                        matches!(scope, deck::ActorScope::Layer(deck::Layer::Catalog))
+                            .then(|| (entity, app.world.get::<ComputedRect>(entity).unwrap().0))
+                    })
+                    .unwrap();
+                assert_eq!(area.h, scene.deck.height() * deck::FULL);
+                for (entity, _) in app.world.query::<FocusTarget>().iter() {
+                    if visible(entity)
+                        && selection::contains(catalog, entity, |node| {
+                            app.world
+                                .get::<mirui::ui::Parent>(node)
+                                .map(|parent| parent.0)
+                        })
+                    {
+                        let target = app.world.get::<ComputedRect>(entity).unwrap().0;
+                        assert!(
+                            target.y >= area.y && target.y + target.h <= area.y + area.h,
+                            "{size:?} {kind:?}: row exceeds the catalog's reduced height"
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn action_panels_keep_labels_inside_their_cards() {
+    for size in [[480, 320], [640, 480], [800, 480]] {
+        for (kind, labels) in [
+            ("game", vec!["开始游戏", "附近联机", "移出收藏", "返回"]),
+            (
+                "system",
+                vec!["切换主题", "音效开关", "管理直连网络", "返回原系统", "关机"],
+            ),
+            (
+                "network",
+                vec!["保留直连，开始游戏", "恢复 Wi-Fi 后开始", "返回"],
+            ),
+            ("exit", vec!["返回", "退出并恢复 Wi-Fi"]),
+            ("power", vec!["返回", "确认关机"]),
+        ] {
+            let mut app = app(size);
+            let mut current = view(Page::Games);
+            current.library.kind = crate::model::LibraryKind::Favorites;
+            current.launcher.enabled = true;
+            current.launcher.overlay = "超级马里奥世界 / Super Mario World".into();
+            current.launcher.overlay_kind = kind.into();
+            current.launcher.items = labels
+                .iter()
+                .map(|label| crate::model::LauncherItem {
+                    name: (*label).into(),
+                    enabled: true,
+                })
+                .collect();
+            let scene = draw(&mut app, &current).unwrap();
+            paint_at(&mut app, &scene, 400);
+            let anchors: Vec<_> = app
+                .world
+                .query::<deck::ActionAnchor>()
+                .iter()
+                .filter_map(|(entity, _)| {
+                    app.world
+                        .get::<ComputedRect>(entity)
+                        .map(|rect| (entity, rect.0))
+                })
+                .collect();
+            assert_eq!(anchors.len(), labels.len());
+            for (_, bounds) in &anchors {
+                assert!(bounds.x >= Fixed::ZERO && bounds.y >= Fixed::ZERO);
+                assert!(bounds.x + bounds.w <= Fixed::from_int(i32::from(size[0])));
+                assert!(bounds.y + bounds.h <= Fixed::from_int(i32::from(size[1])));
+            }
+            for (entity, text) in app.world.query::<Text>().iter() {
+                let Some(bounds) = app.world.get::<ComputedRect>(entity).map(|rect| rect.0) else {
+                    continue;
+                };
+                for &(card, area) in &anchors {
+                    if selection::contains(card, entity, |node| {
+                        app.world
+                            .get::<mirui::ui::Parent>(node)
+                            .map(|parent| parent.0)
+                    }) {
+                        assert!(
+                            bounds.x >= area.x
+                                && bounds.x + bounds.w <= area.x + area.w
+                                && bounds.y >= area.y
+                                && bounds.y + bounds.h <= area.y + area.h,
+                            "{size:?} {kind}: {} escapes card",
+                            text.resolve(app.world.resource())
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn settled_content_preserves_pixels_and_survives_viewport_motion() {
+    use mirui::ui::OffscreenRender;
+    let mut app = app([640, 480]);
+    let mut current = view(Page::Games);
+    current.library.kind = crate::model::LibraryKind::Favorites;
+    current.launcher.enabled = true;
+    let mut scene = draw(&mut app, &current).unwrap();
+    paint_at(&mut app, &scene, 1000);
+    let mut panel = view(Page::Mode);
+    panel.return_to_launcher = true;
+    update(&mut scene, &panel).unwrap();
+    paint_at(&mut app, &scene, 1400);
+    let layers: Vec<_> = app
+        .world
+        .query::<cache::SettledLayerCache>()
+        .iter()
+        .map(|(entity, _)| entity)
+        .collect();
+    // The hidden catalog has no mounted page or content output yet.
+    assert_eq!(layers.len(), 1);
+    let frames: Vec<_> = app
+        .world
+        .query::<selection::SelectionFrame>()
+        .iter()
+        .map(|(entity, _)| entity)
+        .collect();
+    for &layer in &layers {
+        assert!(
+            frames
+                .iter()
+                .all(|&frame| !selection::contains(layer, frame, |node| app
+                    .world
+                    .get::<mirui::ui::Parent>(node)
+                    .map(|parent| parent.0)))
+        );
+    }
+    assert!(
+        layers
+            .iter()
+            .all(|&entity| app.world.has::<OffscreenRender>(entity))
+    );
+    for palette in [crate::theme::Palette::Forest, crate::theme::Palette::Sunset] {
+        app.set_theme(palette.theme()).unwrap();
+        super::paint_at(&mut app, 1400).unwrap();
+        let cached = app.backend.framebuffer().buf.as_slice().to_vec();
+        for &entity in &layers {
+            app.world.remove::<OffscreenRender>(entity);
+        }
+        app.render().unwrap();
+        assert_eq!(cached, app.backend.framebuffer().buf.as_slice());
+    }
+    scene.press(1400);
+    paint_at(&mut app, &scene, 1416);
+    assert!(
+        layers
+            .iter()
+            .all(|&entity| app.world.has::<OffscreenRender>(entity))
+    );
+    paint_at(&mut app, &scene, 2000);
+    assert!(
+        layers
+            .iter()
+            .all(|&entity| app.world.has::<OffscreenRender>(entity))
+    );
+    update(&mut scene, &current).unwrap();
+    paint_at(&mut app, &scene, 2400);
+    let shelf = app
+        .world
+        .query::<cache::SettledLayerCache>()
+        .iter()
+        .find(|(_, layer)| layer.state.launcher().view().tab == 0)
+        .unwrap()
+        .0;
+    assert!(
+        app.world
+            .resource::<mirui::ui::Outputs<mirui::ui::WidgetTexture>>()
+            .unwrap()
+            .get(shelf)
+            .is_some()
+    );
+    current.launcher.tab = 1;
+    update(&mut scene, &current).unwrap();
+    paint_at(&mut app, &scene, 2416);
+    assert!(app.world.has::<OffscreenRender>(shelf));
+}
+
+#[test]
+fn shelf_output_reuses_pixels_during_catalog_loading_and_refreshes_content() {
+    use mirui::ui::{OffscreenGeneration, OffscreenRender, Outputs, WidgetTexture};
+    let mut app = app([640, 480]);
+    let mut shelf = view(Page::Games);
+    shelf.library.kind = crate::model::LibraryKind::Favorites;
+    shelf.refreshing = true;
+    let mut current = view(Page::Games);
+    current.library.kind = crate::model::LibraryKind::Platforms;
+    current.platforms = true;
+    current.launcher.enabled = true;
+    current.launcher.tab = 1;
+    current.launcher_shelf = Some(Box::new(shelf));
+    current.launcher_catalog = Some(Box::new(current.clone()));
+    let mut scene = draw(&mut app, &current).unwrap();
+    paint_at(&mut app, &scene, 1000);
+    let node = app
+        .world
+        .query::<cache::SettledLayerCache>()
+        .iter()
+        .find(|(_, layer)| layer.backdrop)
+        .unwrap()
+        .0;
+    assert!(app.world.has::<OffscreenRender>(node));
+    assert!(
+        app.world
+            .resource::<Outputs<WidgetTexture>>()
+            .unwrap()
+            .get(node)
+            .is_some()
+    );
+    let generation = app
+        .world
+        .get::<OffscreenGeneration>(node)
+        .map_or(0, |g| g.0);
+    let original = app
+        .world
+        .resource::<Outputs<WidgetTexture>>()
+        .unwrap()
+        .get(node)
+        .unwrap()
+        .texture()
+        .buf
+        .as_slice()
+        .to_vec();
+    for (step, selected) in [1, 0, 1].into_iter().enumerate() {
+        current.selected = selected;
+        current.launcher_catalog.as_mut().unwrap().selected = selected;
+        update(&mut scene, &current).unwrap();
+        paint_at(&mut app, &scene, 1100 + step as u64 * 100);
+        assert!(app.world.has::<OffscreenRender>(node));
+        assert_eq!(
+            app.world
+                .get::<OffscreenGeneration>(node)
+                .map_or(0, |g| g.0),
+            generation
+        );
+    }
+    current.launcher_shelf.as_mut().unwrap().entries[0].name = "Changed title".into();
+    update(&mut scene, &current).unwrap();
+    paint_at(&mut app, &scene, 1400);
+    assert!(!app.world.has::<OffscreenRender>(node));
+    paint_at(&mut app, &scene, 2000);
+    assert!(app.world.has::<OffscreenRender>(node));
+    let outputs = app.world.resource::<Outputs<WidgetTexture>>().unwrap();
+    let updated = outputs.get(node).unwrap();
+    assert!(
+        original != updated.texture().buf.as_slice(),
+        "Changed content must replace cached pixels"
+    );
+}
+
+#[test]
+fn launcher_sheets_and_room_overlay_retain_their_own_rows() {
+    let mut app = app([640, 480]);
+    let mut shelf = view(Page::Games);
+    shelf.library.kind = crate::model::LibraryKind::Favorites;
+    let mut catalog = view(Page::Games);
+    catalog.library.kind = crate::model::LibraryKind::Platforms;
+    catalog.platforms = true;
+    let mut initial = shelf.clone();
+    initial.launcher.enabled = true;
+    initial.launcher_shelf = Some(Box::new(shelf));
+    initial.launcher_catalog = Some(Box::new(catalog));
+    let mut scene = draw(&mut app, &initial).unwrap();
+    let shelf_ids: Vec<_> = scene.shelf.entries().entries().map(|(id, _)| id).collect();
+    let catalog_ids: Vec<_> = scene
+        .catalog
+        .entries()
+        .entries()
+        .map(|(id, _)| id)
+        .collect();
+    for (step, tab) in [1, 0, 1, 0].into_iter().enumerate() {
+        initial.launcher.tab = tab;
+        update(&mut scene, &initial).unwrap();
+        paint_at(&mut app, &scene, (step as u64 + 1) * 160);
+        assert_eq!(
+            scene
+                .shelf
+                .entries()
+                .entries()
+                .map(|(id, _)| id)
+                .collect::<Vec<_>>(),
+            shelf_ids
+        );
+        assert_eq!(
+            scene
+                .catalog
+                .entries()
+                .entries()
+                .map(|(id, _)| id)
+                .collect::<Vec<_>>(),
+            catalog_ids
+        );
+    }
+    let mut room = view(Page::Choice);
+    room.return_to_launcher = true;
+    update(&mut scene, &room).unwrap();
+    paint_at(&mut app, &scene, 1100);
+    assert!(scene.deck.layer() == deck::Layer::Room);
+    room.page = Page::Rooms;
+    update(&mut scene, &room).unwrap();
+    paint_at(&mut app, &scene, 1500);
+    assert_eq!(scene.room.rooms().len(), room.rooms.len());
+    assert_eq!(
+        scene
+            .shelf
+            .entries()
+            .entries()
+            .map(|(id, _)| id)
+            .collect::<Vec<_>>(),
+        shelf_ids
+    );
+    update(&mut scene, &initial).unwrap();
+    paint_at(&mut app, &scene, 2000);
+    assert_eq!(scene.deck.panel(), Fixed::ZERO);
+    assert_eq!(
+        scene
+            .catalog
+            .entries()
+            .entries()
+            .map(|(id, _)| id)
+            .collect::<Vec<_>>(),
+        catalog_ids
+    );
+}
+
+#[test]
+fn launcher_overlays_keep_library_identity_and_return_to_the_same_selection() {
+    let mut app = app([640, 480]);
+    let mut initial = view(Page::Games);
+    initial.library.kind = crate::model::LibraryKind::Favorites;
+    initial.launcher = crate::model::LauncherView {
+        enabled: true,
+        key: "local-game".into(),
+        ..Default::default()
+    };
+    let mut scene = draw(&mut app, &initial).unwrap();
+    let launcher = super::launcher(&mut app);
+    let ids: Vec<_> = scene.state.entries().entries().map(|(id, _)| id).collect();
+    for (index, title) in ["游戏操作", "启动器设置", ""].into_iter().enumerate() {
+        let mut next = initial.clone();
+        next.launcher.overlay = title.into();
+        next.launcher.items = vec![crate::model::LauncherItem {
+            name: "开始游戏".into(),
+            enabled: true,
+        }];
+        update(&mut scene, &next).unwrap();
+        paint_at(&mut app, &scene, 1000 + index as u64 * 1000);
+        assert_eq!(
+            scene
+                .state
+                .entries()
+                .entries()
+                .map(|(id, _)| id)
+                .collect::<Vec<_>>(),
+            ids
+        );
+        assert_eq!(launcher.blocked(), !title.is_empty());
+    }
+    assert!(focus_rect(&app).is_some());
+}
+
+#[test]
 fn game_row_routes_replace_contents_and_retain_them_only_on_departure() {
     for initial_page in [Page::Lobby, Page::Games] {
         let mut app = app([640, 480]);
@@ -148,9 +835,10 @@ fn library_routes_keep_focus_inside_their_cards_and_keyboard() {
         let mut app = app(size);
         let mut current = view(Page::Games);
         current.library.kind = LibraryKind::Favorites;
-        current.entries.truncate(3);
+        current.entries.truncate(2);
+        current.library.total = current.entries.len();
         let mut scene = draw(&mut app, &current).unwrap();
-        for index in 0..3 {
+        for index in 0..current.entries.len() {
             current.selected = index;
             update(&mut scene, &current).unwrap();
             paint_at(&mut app, &scene, 1000 + index as u64 * 1000);
@@ -416,6 +1104,7 @@ fn view(page: Page) -> View {
             .collect(),
         entries: (0..4)
             .map(|i| GameRow {
+                artwork: String::new(),
                 favorite: false,
                 key: format!("row-{i}"),
                 name: format!("游戏 {i} / Multiplayer"),
@@ -1424,4 +2113,102 @@ fn lobby_sheets_retain_entities_and_scope_focus_through_reversal() {
         paint_at(&mut app, &scene, 2400);
         assert_eq!(scene.state.deck(), Fixed::ZERO);
     }
+}
+
+#[test]
+fn retained_actor_follows_only_the_active_layer_page_and_pane() {
+    let mut app = app([640, 480]);
+    let mut initial = view(Page::Games);
+    initial.library.kind = crate::model::LibraryKind::Favorites;
+    initial.launcher.enabled = true;
+    let mut scene = draw(&mut app, &initial).unwrap();
+    let mut current = view(Page::Lobby);
+    current.lobby = true;
+    current.return_to_launcher = true;
+    let mut time = 0;
+    for populated in [false, true] {
+        current.rooms = if populated {
+            view(Page::Rooms).rooms
+        } else {
+            Vec::new()
+        };
+        for (page, selected) in [
+            (Page::Lobby, 0),
+            (Page::Mode, 0),
+            (Page::Mode, 1),
+            (Page::Lobby, 0),
+        ] {
+            current.page = page;
+            current.selected = selected;
+            update(&mut scene, &current).unwrap();
+            time += 800;
+            paint_at(&mut app, &scene, time);
+            let scopes = app.world.query::<deck::ActorScope>();
+            let active_layer = scopes
+                .iter()
+                .find_map(|(entity, scope)| {
+                    matches!(scope, deck::ActorScope::Layer(deck::Layer::Room)).then_some(entity)
+                })
+                .unwrap();
+            let inside = |root, entity| {
+                selection::contains(root, entity, |node| {
+                    app.world
+                        .get::<mirui::ui::Parent>(node)
+                        .map(|parent| parent.0)
+                })
+            };
+            let active_pane = scopes
+                .iter()
+                .find_map(|(entity, scope)| {
+                    (matches!(scope, deck::ActorScope::Pane(value) if *value == page)
+                        && inside(active_layer, entity))
+                    .then_some(entity)
+                })
+                .unwrap();
+            let actors: Vec<_> = app
+                .world
+                .query::<actor::ActorFrame>()
+                .iter()
+                .map(|(node, _)| node)
+                .collect();
+            assert_eq!(actors.len(), 1);
+            let actor = actors[0];
+            assert!(app.world.get::<mirui::ui::Hidden>(actor).is_none());
+            let target = app.world.get::<FollowBounds>(actor).unwrap().target;
+            assert!(
+                inside(active_pane, target),
+                "{page:?}: actor must leave the compressed pane"
+            );
+            if page == Page::Mode || !populated {
+                assert!(app.world.get::<deck::ActorAnchor>(target).is_some());
+            } else {
+                assert_eq!(
+                    app.world.get::<FocusTarget>(target).unwrap().index(),
+                    selected
+                );
+            }
+        }
+    }
+    update(&mut scene, &initial).unwrap();
+    paint_at(&mut app, &scene, time + 800);
+    let frame = app
+        .world
+        .query::<actor::ActorFrame>()
+        .iter()
+        .next()
+        .unwrap()
+        .0;
+    let target = app.world.get::<FollowBounds>(frame).unwrap().target;
+    let shelf = app
+        .world
+        .query::<deck::ActorScope>()
+        .iter()
+        .find_map(|(entity, scope)| {
+            matches!(scope, deck::ActorScope::Layer(deck::Layer::Shelf)).then_some(entity)
+        })
+        .unwrap();
+    assert!(selection::contains(shelf, target, |node| app
+        .world
+        .get::<mirui::ui::Parent>(node)
+        .map(|parent| parent.0)));
 }

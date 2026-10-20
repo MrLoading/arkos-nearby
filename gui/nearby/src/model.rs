@@ -59,6 +59,14 @@ pub struct RoomRow {
 #[serde(deny_unknown_fields)]
 pub struct View {
     #[serde(default)]
+    pub return_to_launcher: bool,
+    #[serde(default)]
+    pub launcher: LauncherView,
+    #[serde(default)]
+    pub launcher_shelf: Option<Box<View>>,
+    #[serde(default)]
+    pub launcher_catalog: Option<Box<View>>,
+    #[serde(default)]
     pub library: LibraryView,
     #[serde(default)]
     pub platforms: bool,
@@ -128,6 +136,8 @@ pub struct NetworkPeer {
 #[serde(deny_unknown_fields)]
 pub struct GameRow {
     #[serde(default)]
+    pub artwork: String,
+    #[serde(default)]
     pub favorite: bool,
     #[serde(default)]
     pub icon: String,
@@ -143,6 +153,7 @@ pub struct GameRow {
 impl Default for GameRow {
     fn default() -> Self {
         Self {
+            artwork: String::new(),
             favorite: false,
             icon: String::new(),
             available: true,
@@ -171,7 +182,6 @@ mod tests {
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-#[cfg(any(target_os = "linux", test))]
 pub enum Action {
     Up,
     Down,
@@ -183,8 +193,11 @@ pub enum Action {
     PageUp,
     PageDown,
     Auxiliary,
+    Favorite,
+    LauncherHome,
     Start,
     #[serde(skip)]
+    #[cfg(any(target_os = "linux", test))]
     Theme,
 }
 
@@ -206,5 +219,28 @@ pub struct LibraryView {
     pub keyboard: bool,
     pub key_selected: usize,
     pub row_selected: usize,
+    pub position: usize,
+    pub total: usize,
     pub sort: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(default, deny_unknown_fields)]
+pub struct LauncherView {
+    pub enabled: bool,
+    pub tab: usize,
+    pub navigation: bool,
+    pub key: String,
+    pub netplay: bool,
+    pub overlay: String,
+    pub overlay_kind: String,
+    pub items: Vec<LauncherItem>,
+    pub selected: usize,
+    pub retained: bool,
+}
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct LauncherItem {
+    pub name: String,
+    pub enabled: bool,
 }

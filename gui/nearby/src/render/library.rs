@@ -2,15 +2,15 @@ use mirui::prelude::*;
 use mirui::ui::widgets::{Image, Text, TextAlign::Center};
 
 use super::{
-    artwork::preview,
+    artwork::cover,
     consoles::console,
     lists::{game_rows, games},
-    pixel::{Scenery, Stage::Walker, art},
+    pixel::Scenery,
     rows::Row,
     selection::FocusTarget,
     state::DisplayState,
     style::*,
-    widgets::{caption, label, paragraph, shadow},
+    widgets::{caption, paragraph, shadow},
 };
 use crate::model::LibraryKind;
 
@@ -20,13 +20,18 @@ const KEYS: [&str; 40] = [
     "6", "7", "8", "9", "0",
 ];
 
+const CARTRIDGE_EDGE: i32 = 2;
+const CARTRIDGE_RAIL: i32 = 2;
+const CARTRIDGE_CAP: i32 = 4;
+const CARTRIDGE_CONTACTS: usize = 8;
+
 #[compose]
 pub(super) fn library(kind: LibraryKind, state: model!(DisplayState), metrics: Metrics) -> Entity {
     ui! {
         Column (grow: 1.0, min_height: 0, min_width: 0) {
             match kind {
                 LibraryKind :: Favorites => {
-                    shelf (state, metrics)
+                    shelf (state, state.shelf(), metrics)
                 }
                 LibraryKind :: Search => {
                     search (state, metrics)
@@ -40,115 +45,147 @@ pub(super) fn library(kind: LibraryKind, state: model!(DisplayState), metrics: M
 }
 
 #[compose]
-fn shelf(state: model!(DisplayState), metrics: Metrics) -> Entity {
+fn shelf(
+    state: model!(DisplayState),
+    grid: model!(super::shelf::Shelf),
+    metrics: Metrics,
+) -> Entity {
     ui! {
-        Column (grow: 1.0, min_height: 0, row_gap: metrics.gap) [
+        Column (
+            grow: 1.0,
+            min_height: 0,
+            min_width: 0,
+            bg_color: PANEL,
+            padding: Padding::all(super::shelf::INSET),
+            row_gap: 4
+        ) [
             Scenery::Ridge,
         ] {
             if ${ state.entries().is_empty() } {
-                Column (grow: 1.0, min_height: 0, bg_color: PANEL, align: AlignItems::Center) {
-                    console (super::consoles::Platform::Favorites)
-                    label ("收藏夹还是空的", metrics.title, FOREGROUND, Center)
-                }
+                console (super::consoles::Platform::Favorites)
             } else {
-                Row (grow: 1.0, min_height: 0, column_gap: metrics.gap, padding: Padding::all(4)) {
-                    walk ${ state.entries().entries() } with item by item.0 {
-                        cartridge (state, item.1, metrics)
+                Column (
+                    grow: 1.0,
+                    min_height: 0,
+                    min_width: 0,
+                    row_gap: super::shelf::GAP,
+                    align: AlignItems::Center,
+                    justify: JustifyContent::Center
+                ) {
+                    walk ${ 0..grid.plan().grid.rows } with line {
+                        Row (
+                            width: ${ grid.plan().width() },
+                            height: ${ grid.plan().card_height },
+                            shrink: 0.0,
+                            min_height: 0,
+                            column_gap: super::shelf::GAP
+                        ) {
+                            walk ${
+                                state
+                                    .entries()
+                                    .entries()
+                                    .skip(line * grid.plan().grid.columns)
+                                    .take(grid.plan().grid.columns)
+                                    .collect::<Vec<_>>()
+                            } with item by item.0 {
+                                cartridge (state, item.1, grid, metrics)
+                            }
+                        }
                     }
                 }
             }
-            art (state, Walker, metrics.walker_height())
-        }
+            Row (height: 4, shrink: 0.0, column_gap: 4, justify: JustifyContent::Center) {
+                walk ${
+                    let (first, end, selected) = grid.pages();
+                    (first..end).map(|i| (i, i == selected)).collect::<Vec<_>>()
+                } with page by page.0 {
+                    View (
+                        width: if page.1 { 12 } else { 4 },
+                        bg_color: if page.1 { ACCENT } else { DIVIDER }
+                    )
+                }
+            }
+        } on SizeChanged { grid.set_size(event.new.width, event.new.height); }
     }
 }
 
 #[compose]
-fn cartridge(state: model!(DisplayState), row: model!(Row), metrics: Metrics) -> Entity {
+fn cartridge(
+    state: model!(DisplayState),
+    row: model!(Row),
+    grid: model!(super::shelf::Shelf),
+    metrics: Metrics,
+) -> Entity {
     let movement = row.clone();
     let focus = row.clone();
+    let directory = row.clone();
     let name = row.clone();
-    let platform = row.clone();
-    let selected = row.clone();
     let enabled = row.clone();
+    let selected = row.clone();
     ui! {
         Column (
-            grow: 0.0,
-            width: Dimension::percent(33),
+            width: ${ grid.plan().card_width },
+            shrink: 0.0,
             min_width: 0,
             min_height: 0,
-            transform: ${ state.motion().card_transform(movement.index()) }
+            transform: ${ state.card_motion().card_transform(movement.index()) }
         ) {
             Column (
                 grow: 1.0,
                 min_width: 0,
                 min_height: 0,
-                padding: Padding::all(metrics.gap),
+                padding: Padding::all(super::shelf::CARD_INSET),
                 container: true,
-                row_gap: metrics.gap,
-                bg_color: ${ state.motion().card_color(focus.index()) }
+                bg_color: ${ state.card_motion().card_color(focus.index()) }
             ) [
                 FocusTarget::row(row.clone()),
             ] {
-                Column (
-                    grow: 1.0,
-                    min_height: 36,
-                    min_width: 0,
-                    bg_color: DEEP,
-                    padding: Padding::all(4),
-                    border_width: 3,
-                    border_color: DIVIDER
-                ) {
-                    Column (grow: 1.0, min_height: 0, min_width: 0, bg_color: SKY) {
-                        if ${ state.selected() == Some(selected.index()) } {
-                            preview (state, metrics)
-                        } else {
-                            Column (grow: 1.0, min_height: 0) {
-                                walk ${ std::iter::once(platform.platform()) } with kind by kind {
-                                    console (kind)
-                                }
-                            }
-                        }
-                    }
-                    Row (height: 8, shrink: 0.0, justify: JustifyContent::Center, column_gap: 3) {
-                        walk 0..8 with _index {
-                            View (width: 5, height: 8, bg_color: WARNING)
-                        }
-                    }
+                if ${ directory.directory() } {
+                    library_icon (metrics)
+                } else {
+                    cartridge_content (row, metrics)
                 }
-                Text (
-                    text: ${ name.label(true) },
-                    width: Dimension::percent(100),
-                    min_width: 0,
-                    height: 52,
+                Row (
+                    height: super::shelf::LABEL_HEIGHT,
                     shrink: 0.0,
-                    font: font(metrics.title),
-                    font_size: metrics.title,
-                    text_color: ${ if enabled.available() { FOREGROUND } else { DISABLED } },
-                    paragraph: paragraph(Center, 2)
-                ) [
-                    FONT_PAINT,
-                ]
-                View (
-                    position: Position::Absolute,
-                    top: 2,
-                    left: @(width) { width - Fixed::from_int(14) },
-                    width: 12,
-                    height: 12,
-                    shrink: 0.0
+                    min_width: 0,
+                    container: true,
+                    padding: Padding {
+                        right: super::shelf::LABEL_ACTOR_SPACE.into(),
+                        ..Default::default()
+                    }
                 ) {
-                    Image (
-                        src: path!(
-                            M 8 0 H 12 V 4 H 20 V 8 H 16 V 12 H 18 V 20 H 12 V 16 H 8 V 20 H 2 V 12 H 4 V 8 H
-                            0 V 4 H 8 Z
-                        ),
-                        viewbox: 20,
-                        width: 12,
-                        height: 12,
-                        color: WARNING
-                    )
+                    Text (
+                        text: ${ name.label(true) },
+                        grow: 1.0,
+                        min_width: 0,
+                        font: font(BODY_SIZE),
+                        font_size: BODY_SIZE,
+                        text_color: ${ if enabled.available() { FOREGROUND } else { DISABLED } },
+                        paragraph: paragraph(mirui::ui::widgets::TextAlign::Start, 1)
+                    ) [
+                        FONT_PAINT,
+                    ]
+                    if ${ !state.launcher().view().enabled && state.selected() == Some(selected.index()) } {
+                        View (
+                            position: Position::Absolute,
+                            left: Dimension::percent(100),
+                            top: Dimension::percent(100),
+                            width: 32,
+                            height: 48,
+                            transform: ${
+                                mirui::types::Transform::translate(Fixed::from_int(-24), Fixed::from_int(-36))
+                                    .compose(&mirui::types::Transform::scale(Fixed::HALF, Fixed::HALF))
+                            }
+                        ) [
+                            super::pixel::ActorSprite {
+                                state: state.clone(),
+                            },
+                        ]
+                    }
                 }
             }
-            shadow (metrics)
+            View (height: super::shelf::SHADOW, shrink: 0.0, bg_color: DIVIDER)
         }
     }
 }
@@ -159,9 +196,9 @@ fn search(state: model!(DisplayState), metrics: Metrics) -> Entity {
     ui! {
         Column (grow: 1.0, min_height: 0, row_gap: metrics.gap) {
             Column (
-                height: 32,
+                height: i32::from(metrics.title) + LABEL_LEADING + metrics.gap * 2,
                 shrink: 0.0,
-                padding: Padding::all(4),
+                padding: Padding::all(metrics.gap),
                 bg_color: PANEL,
                 border_width: 1,
                 border_color: ACCENT
@@ -172,7 +209,7 @@ fn search(state: model!(DisplayState), metrics: Metrics) -> Entity {
                         if query.is_empty() { "输入游戏名或文件名".into() } else { query }
                     },
                     || FOREGROUND,
-                    metrics.body,
+                    metrics.title,
                     Center,
                     LABEL_LEADING
                 )
@@ -201,7 +238,7 @@ fn keycap(state: model!(DisplayState), index: usize, metrics: Metrics) -> Entity
             grow: 1.0,
             min_width: 0,
             min_height: 0,
-            transform: ${ state.motion().card_transform(100 + index) }
+            transform: ${ state.card_motion().card_transform(100 + index) }
         ) {
             Column (
                 grow: 1.0,
@@ -215,12 +252,192 @@ fn keycap(state: model!(DisplayState), index: usize, metrics: Metrics) -> Entity
                 caption (
                     move || KEYS[index].into(),
                     move || if state.selected() == Some(100 + index) { ON_ACCENT } else { FOREGROUND },
-                    metrics.body,
+                    if KEYS[index].len() == 1 { metrics.title } else { metrics.body },
                     Center,
                     LABEL_LEADING
                 )
             }
             shadow (metrics)
+        }
+    }
+}
+
+#[compose]
+pub(super) fn library_icon(metrics: Metrics) -> Entity {
+    ui! {
+        Column (
+            grow: 1.0,
+            min_height: 0,
+            min_width: 0,
+            align: AlignItems::Center,
+            justify: JustifyContent::Center,
+            padding: Padding::all(metrics.gap),
+            bg_color: SKY
+        ) {
+            View (grow: 1.0, min_height: 0, width: Dimension::percent(100)) {
+                Image (
+                    src: path!(M 22 20 H 138 V 111 H 136 V 116 H 128 V 111 H 32 V 116 H 24 V 111 H 22 Z),
+                    viewbox: 160,
+                    position: Position::Absolute,
+                    width: Dimension::percent(100),
+                    height: Dimension::percent(100),
+                    color: FOREGROUND
+                )
+                Image (
+                    src: path!(M 27 25 H 133 V 106 H 27 Z),
+                    viewbox: 160,
+                    position: Position::Absolute,
+                    width: Dimension::percent(100),
+                    height: Dimension::percent(100),
+                    color: PANEL
+                )
+                Image (
+                    src: path!(
+                        M 31 61 H 129 V 66 H 31 Z M 31 96 H 129 V 101 H 31 Z M 87 34 H 118 V 57 H 87 Z M
+                        35 73 H 63 V 92 H 35 Z
+                    ),
+                    viewbox: 160,
+                    position: Position::Absolute,
+                    width: Dimension::percent(100),
+                    height: Dimension::percent(100),
+                    color: ACCENT
+                )
+                Image (
+                    src: path!(M 35 32 H 56 V 57 H 35 Z M 69 71 H 89 V 92 H 69 Z),
+                    viewbox: 160,
+                    position: Position::Absolute,
+                    width: Dimension::percent(100),
+                    height: Dimension::percent(100),
+                    color: CLAY
+                )
+                Image (
+                    src: path!(M 61 31 H 82 V 57 H 61 Z M 95 71 H 118 V 92 H 95 Z),
+                    viewbox: 160,
+                    position: Position::Absolute,
+                    width: Dimension::percent(100),
+                    height: Dimension::percent(100),
+                    color: WARNING
+                )
+            }
+            Image (
+                src: path!(M 0 0 L 9 8 L 18 0 V 5 L 9 14 L 0 5 Z),
+                viewbox: 18,
+                width: 18,
+                height: 14,
+                shrink: 0.0,
+                color: ACCENT
+            )
+        }
+    }
+}
+
+#[compose]
+fn cartridge_content(row: model!(Row), _metrics: Metrics) -> Entity {
+    let platform = row.clone();
+    ui! {
+        Column (grow: 1.0, min_width: 0, min_height: 0, row_gap: 0) {
+            Column (
+                grow: 1.0,
+                min_height: 0,
+                min_width: 0,
+                bg_color: DIVIDER,
+                padding: Padding {
+                    left: CARTRIDGE_RAIL.into(),
+                    right: CARTRIDGE_RAIL.into(),
+                    ..Default::default()
+                },
+                border_width: CARTRIDGE_EDGE,
+                border_color: DEEP
+            ) {
+                Row (
+                    height: CARTRIDGE_CAP,
+                    shrink: 0.0,
+                    align: AlignItems::Center,
+                    column_gap: CARTRIDGE_RAIL
+                ) {
+                    cartridge_rivet ()
+                    Column (grow: 1.0, row_gap: 2) {
+                        View (height: 1, bg_color: PANEL)
+                        View (height: 1, bg_color: SECONDARY)
+                    }
+                    cartridge_rivet ()
+                }
+                Row (grow: 1.0, min_height: 0, min_width: 0, column_gap: CARTRIDGE_RAIL * 2) {
+                    cartridge_grip ()
+                    Column (
+                        grow: 1.0,
+                        min_height: 0,
+                        min_width: 0,
+                        bg_color: DEEP,
+                        padding: Padding::all(CARTRIDGE_EDGE)
+                    ) {
+                        cover (
+                            row.cover_bounds(),
+                            move || row.artwork_token(),
+                            move || platform.platform()
+                        )
+                    }
+                    cartridge_grip ()
+                }
+                Row (
+                    height: CARTRIDGE_CAP,
+                    shrink: 0.0,
+                    justify: JustifyContent::Center,
+                    align: AlignItems::FlexEnd
+                ) {
+                    Row (
+                        width: Dimension::percent(64),
+                        height: 4,
+                        padding: Padding {
+                            left: CARTRIDGE_RAIL.into(),
+                            right: CARTRIDGE_RAIL.into(),
+                            ..Default::default()
+                        },
+                        column_gap: CARTRIDGE_EDGE,
+                        bg_color: DEEP
+                    ) {
+                        walk 0..CARTRIDGE_CONTACTS with _index {
+                            Column (grow: 1.0, min_width: 0, bg_color: WARNING) {
+                                View (height: CARTRIDGE_EDGE, bg_color: CLAY)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[compose]
+fn cartridge_grip() -> Entity {
+    ui! {
+        Column (
+            width: CARTRIDGE_RAIL,
+            shrink: 0.0,
+            justify: JustifyContent::Center,
+            row_gap: CARTRIDGE_RAIL
+        ) {
+            walk 0..3 with _index {
+                Column (height: 3, shrink: 0.0, bg_color: SECONDARY) {
+                    View (height: 1, bg_color: PANEL)
+                }
+            }
+        }
+    }
+}
+
+#[compose]
+fn cartridge_rivet() -> Entity {
+    ui! {
+        Column (
+            width: 3,
+            height: 3,
+            shrink: 0.0,
+            bg_color: SECONDARY,
+            align: AlignItems::Center,
+            justify: JustifyContent::Center
+        ) {
+            View (width: 3, height: 1, bg_color: PANEL)
         }
     }
 }

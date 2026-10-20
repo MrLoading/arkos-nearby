@@ -19,6 +19,8 @@ const END: &[u8] = b"if [ -f \"/boot/rk3566.dtb\" ]";
 pub const BLOCK:&[u8]=b"if [ \"$?\" -eq \"10\" ]; then\n  # ARKOS_NEARBY_X_BEGIN\n  sudo -n /opt/arkos-nearby/arkos-nearby menu --frontend \"$emulator\" -- \"$@\"\n  result=$?\n  if [ \"$result\" -ne \"230\" ]; then\n    exit \"$result\"\n  fi\n  # ARKOS_NEARBY_X_END\nfi\n\n";
 pub const ENTRY: &[u8] = b"#!/bin/sh\nexec sudo -n /opt/arkos-nearby/arkos-nearby manual\n";
 const ENTRY_PATH: &str = "opt/system/Nearby Multiplayer.sh";
+const LAUNCHER_PATH: &str = "opt/system/Nearby Launcher.sh";
+const LAUNCHER_ENTRY: &[u8] = b"#!/bin/sh\nexec sudo -n /opt/arkos-nearby/arkos-nearby launcher\n";
 const ROOT: &str = "opt/arkos-nearby";
 
 fn hash(bytes: &[u8]) -> String {
@@ -89,6 +91,8 @@ struct Record {
     files: BTreeMap<String, String>,
     wrappers: BTreeMap<String, String>,
     entry_sha256: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    launcher_sha256: Option<String>,
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -114,6 +118,7 @@ struct Change {
 
 fn allowed_target(name: &str) -> bool {
     name == ENTRY_PATH
+        || name == LAUNCHER_PATH
         || name == crate::home::LAUNCHER
         || matches!(
             name,
@@ -261,6 +266,12 @@ fn verify_record(record: &Record, layout: &Layout) -> Result<()> {
             "Launcher was changed externally",
         )?;
     }
+    if let Some(expected) = &record.launcher_sha256 {
+        require(
+            digest(&layout.path(LAUNCHER_PATH))? == *expected,
+            "Launcher entry was changed externally",
+        )?;
+    }
     require(
         digest(&layout.path(ENTRY_PATH))? == record.entry_sha256,
         "Options entry was changed externally",
@@ -293,7 +304,10 @@ fn check_idle_ui() -> Result<()> {
         require(
             !(owned
                 && args.iter().any(|arg| {
-                    matches!(*arg, b"menu" | b"manual" | b"worker" | b"game" | b"serve")
+                    matches!(
+                        *arg,
+                        b"menu" | b"manual" | b"worker" | b"game" | b"serve" | b"launcher-open"
+                    )
                 })),
             "Exit the room menu before installing or uninstalling",
         )?;
@@ -357,6 +371,17 @@ fn install_at(
         });
     }
     let entry = layout.path(ENTRY_PATH);
+    let launcher = layout.path(LAUNCHER_PATH);
+    if previous
+        .as_ref()
+        .is_none_or(|record| record.launcher_sha256.is_none())
+        && launcher.exists()
+    {
+        require(
+            fs::read(&launcher)? == LAUNCHER_ENTRY,
+            "Launcher entry has unrelated contents",
+        )?;
+    }
     let home = layout.path(crate::home::LAUNCHER);
     if home.is_file() {
         let backup_name = "original-launch/emulationstation";
@@ -457,6 +482,7 @@ fn install_at(
         files,
         wrappers,
         entry_sha256: hash(ENTRY),
+        launcher_sha256: Some(hash(LAUNCHER_ENTRY)),
     };
     if let Some((key, metadata)) =
         crate::identity::prepare_at(&layout.path(ROOT), &record.device.mac)?
@@ -475,6 +501,11 @@ fn install_at(
     changes.push(Change {
         target: ENTRY_PATH.into(),
         data: Some(ENTRY.to_vec()),
+        mode: 0o755,
+    });
+    changes.push(Change {
+        target: LAUNCHER_PATH.into(),
+        data: Some(LAUNCHER_ENTRY.to_vec()),
         mode: 0o755,
     });
     changes.push(Change {
@@ -539,6 +570,13 @@ fn uninstall_at(layout: &Layout) -> Result<Value> {
         data: None,
         mode: 0o755,
     });
+    if record.launcher_sha256.is_some() {
+        changes.push(Change {
+            target: LAUNCHER_PATH.into(),
+            data: None,
+            mode: 0o755,
+        });
+    }
     for name in record.files.keys() {
         changes.push(Change {
             target: format!("{ROOT}/{name}"),

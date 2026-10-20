@@ -50,7 +50,7 @@ pub(super) struct Display {
     _lock: Option<crate::system::Lock>,
     stdin: Option<ChildStdin>,
     gui: Option<OwnedChild>,
-    mapper: OwnedChild,
+    mapper: Option<OwnedChild>,
     reader: Option<JoinHandle<()>>,
     sender: mpsc::Sender<Delivery>,
     receiver: mpsc::Receiver<Delivery>,
@@ -64,32 +64,51 @@ pub(super) struct Display {
 
 impl Display {
     pub(super) fn open() -> Result<Self> {
+        Self::open_mode(false)
+    }
+    pub(super) fn open_launcher() -> Result<Self> {
+        Self::open_mode(true)
+    }
+    fn open_mode(launcher: bool) -> Result<Self> {
         let root = Path::new("/run/arkos-nearby-rust/ui");
         mkdir(root)?;
         let lock = crate::system::Lock::try_acquire(&root.join("interface.lock"))?;
         let directory = Temporary(root.join(random_id()?));
         mkdir(&directory.0)?;
         let keys = directory.0.join("keys.gptk");
-        private_write(&keys, KEYS.as_bytes())?;
+        let mapping = if launcher {
+            KEYS.replace("x = r\n", "").replace("back = esc\n", "")
+        } else {
+            KEYS.into()
+        };
+        private_write(&keys, mapping.as_bytes())?;
         let logs = Path::new(INSTALL).join("logs");
         mkdir(&logs)?;
         log(json!({"phase":"gui-spawn"}))?;
-        let mapper = OwnedChild(
-            Command::new("/opt/inttools/gptokeyb")
-                .args(["-c", keys.to_str().ok_or("Invalid key mapping path")?])
-                .env("TERM", "linux")
-                .env("LANG", "C.UTF-8")
-                .env("LC_ALL", "C.UTF-8")
-                .env(
-                    "SDL_GAMECONTROLLERCONFIG_FILE",
-                    "/opt/inttools/gamecontrollerdb.txt",
-                )
-                .stdout(Stdio::from(File::create(logs.join("native-mapper.log"))?))
-                .stderr(Stdio::null())
-                .spawn()?,
-        );
+        let mapper = if launcher {
+            None
+        } else {
+            Some(OwnedChild(
+                Command::new("/opt/inttools/gptokeyb")
+                    .args(["-c", keys.to_str().ok_or("Invalid key mapping path")?])
+                    .env("TERM", "linux")
+                    .env("LANG", "C.UTF-8")
+                    .env("LC_ALL", "C.UTF-8")
+                    .env(
+                        "SDL_GAMECONTROLLERCONFIG_FILE",
+                        "/opt/inttools/gamecontrollerdb.txt",
+                    )
+                    .stdout(Stdio::from(File::create(logs.join("native-mapper.log"))?))
+                    .stderr(Stdio::null())
+                    .spawn()?,
+            ))
+        };
         let gui = OwnedChild(
             Command::new(format!("{INSTALL}/arkos-nearby-gui"))
+                .env(
+                    "ARKOS_NEARBY_LAUNCHER_INPUT",
+                    if launcher { "1" } else { "0" },
+                )
                 .env("SDL_INPUT_LINUX_KEEP_KBD", "1")
                 .env("SDL_RENDER_BATCHING", "1")
                 .env("TERM", "linux")
@@ -112,7 +131,7 @@ impl Display {
         Ok(display)
     }
 
-    fn connect(mut gui: OwnedChild, mapper: OwnedChild) -> Result<Self> {
+    fn connect(mut gui: OwnedChild, mapper: Option<OwnedChild>) -> Result<Self> {
         let stdin = gui.0.stdin.take().ok_or("GUI has no input channel")?;
         let stdout = gui.0.stdout.take().ok_or("GUI has no output channel")?;
         let (sender, receiver) = mpsc::channel();
@@ -128,6 +147,23 @@ impl Display {
                 if let Ok(value) = serde_json::from_slice::<Value>(&line) {
                     let event = if value == json!({"event":"frame_ready"}) {
                         Some(Event::FrameReady)
+                    } else if value["event"] == "shelf_layout" {
+                        serde_json::from_value::<crate::catalog::shelf::Grid>(value["grid"].clone())
+                            .ok()
+                            .filter(|grid| grid.valid())
+                            .zip(value["launcher"].as_bool())
+                            .map(|(grid, launcher)| Event::ShelfLayout(grid, launcher))
+                    } else if value["event"] == "launcher"
+                        && matches!(value["action"].as_str(), Some("launch" | "multiplayer"))
+                        && value["key"].as_str().is_some_and(|key| {
+                            key.len() == 64 && key.bytes().all(|b| b.is_ascii_hexdigit())
+                        })
+                    {
+                        Some(Event::Launcher(
+                            value["action"].as_str().unwrap().into(),
+                            value["key"].as_str().unwrap().into(),
+                            monotonic(),
+                        ))
                     } else {
                         value
                             .as_str()
@@ -144,6 +180,8 @@ impl Display {
                                         | "page_down"
                                         | "auxiliary"
                                         | "start"
+                                        | "favorite"
+                                        | "launcher_home"
                                 )
                             })
                             .map(|s| Event::Input(s.into(), monotonic()))
@@ -197,10 +235,12 @@ impl Display {
     }
 
     pub(super) fn present(&mut self, view: Value) -> Result<()> {
-        require(
-            self.mapper.0.try_wait()?.is_none(),
-            "The owned gamepad mapper stopped",
-        )?;
+        if let Some(mapper) = &mut self.mapper {
+            require(
+                mapper.0.try_wait()?.is_none(),
+                "The owned gamepad mapper stopped",
+            )?;
+        }
         let gui = self.gui.as_mut().ok_or("The graphical interface stopped")?;
         require(
             gui.0.try_wait()?.is_none(),
@@ -219,7 +259,7 @@ impl Display {
     pub(super) fn receive(&self) -> std::result::Result<Option<Event>, mpsc::RecvTimeoutError> {
         let delivery = self.receiver.recv_timeout(Duration::from_millis(20))?;
         if delivery.screen.is_some_and(|screen| screen != self.screen)
-            || matches!(&delivery.event, Event::Input(_, at) if *at < self.input_epoch)
+            || matches!(&delivery.event, Event::Input(_, at) | Event::Launcher(_,_,at) if *at < self.input_epoch)
         {
             return Ok(None);
         }
@@ -253,7 +293,7 @@ mod tests {
         let gui = OwnedChild(Command::new("sh").args(["-c", "printf '{\"event\":\"frame_ready\"}\\n'; while IFS= read -r line; do printf '\"confirm\"\\n'; done"])
             .stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().unwrap());
         let mapper = OwnedChild(Command::new("sleep").arg("30").spawn().unwrap());
-        let display = Display::connect(gui, mapper).unwrap();
+        let display = Display::connect(gui, Some(mapper)).unwrap();
         assert!(matches!(next(&display), Event::FrameReady));
         display
     }
@@ -273,13 +313,13 @@ mod tests {
     fn screen_handoffs_keep_both_processes_and_close_them_at_session_end() {
         let mut display = display();
         let gui = display.gui.as_ref().unwrap().0.id();
-        let mapper = display.mapper.0.id();
+        let mapper = display.mapper.as_ref().unwrap().0.id();
         for page in ["mode", "games", "choice", "host", "rooms", "mode"] {
             display.begin_screen();
             display.present(json!({"page":page})).unwrap();
             assert!(matches!(next(&display), Event::Input(action, _) if action == "confirm"));
             assert_eq!(display.gui.as_ref().unwrap().0.id(), gui);
-            assert_eq!(display.mapper.0.id(), mapper);
+            assert_eq!(display.mapper.as_ref().unwrap().0.id(), mapper);
         }
         drop(display);
         for pid in [gui, mapper] {

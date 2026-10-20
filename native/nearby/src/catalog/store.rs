@@ -46,7 +46,7 @@ impl Directory {
     pub fn current(&self, path: &Path) -> bool {
         self.stamp.current() && self.list == Stamp::read(&path.join("gamelist.xml"))
     }
-    pub fn read(path: &Path, platform: &Path, roots: &[PathBuf]) -> Option<Self> {
+    pub fn read(path: &Path, platform: &Entry, roots: &[PathBuf]) -> Option<Self> {
         let mut result = Self {
             stamp: Stamp::read(path)?,
             list: Stamp::read(&path.join("gamelist.xml")),
@@ -62,12 +62,12 @@ impl Directory {
             let Ok(child) = child.path().canonicalize() else {
                 continue;
             };
-            if !child.starts_with(platform) {
+            if !child.starts_with(&platform.path) {
                 continue;
             }
             if child.is_dir() {
                 result.directories.push(child);
-            } else if super::game_file(&child) {
+            } else if platform.accepts(&child) {
                 result.files.push(child);
             }
         }

@@ -2,10 +2,10 @@ use super::state::PageKey;
 use super::{
     Section, StaticCache,
     cache::GpuLayerCache,
-    pixel::Scenery,
+    pixel::{Scenery, Scenery::Header, backdrop},
     state::DisplayState,
     style::*,
-    widgets::{keycap, label, paragraph},
+    widgets::{control_key, control_label, label, paragraph},
 };
 use crate::model::Page;
 use mirui::prelude::*;
@@ -26,7 +26,13 @@ pub(super) fn header(view: PageKey, state: model!(DisplayState), metrics: Metric
     };
     ui! {
         Row (
-            height: metrics.header_height(),
+            height: ${
+                if state.launcher().view().enabled || view.page == Page::Games {
+                    metrics.launcher_header_height()
+                } else {
+                    metrics.header_height()
+                }
+            },
             shrink: 0.0,
             column_gap: metrics.gap + 4,
             padding: metrics.header_padding(),
@@ -34,8 +40,8 @@ pub(super) fn header(view: PageKey, state: model!(DisplayState), metrics: Metric
             align: AlignItems::Center
         ) [
             Section::Header,
-            Scenery::Header,
         ] {
+            backdrop (Header)
             View (
                 width: metrics.logo_size(),
                 height: metrics.logo_size(),
@@ -72,7 +78,16 @@ pub(super) fn header(view: PageKey, state: model!(DisplayState), metrics: Metric
                 ]
             }
             Text (
-                step,
+                text: ${
+                    if view.page == Page::Games {
+                        state
+                            .library_counter()
+                            .map(|(position, total)| format!("{position} / {total}"))
+                            .unwrap_or_default()
+                    } else {
+                        step.clone()
+                    }
+                },
                 width: if metrics.compact { 76 } else { 96 },
                 height: if metrics.compact { 26 } else { 34 },
                 shrink: 0.0,
@@ -92,81 +107,75 @@ pub(super) fn header(view: PageKey, state: model!(DisplayState), metrics: Metric
 #[compose]
 pub(super) fn footer(view: PageKey, state: model!(DisplayState), metrics: Metrics) -> Entity {
     ui! {
-        Row (
-            height: metrics.footer_height(),
+        Column (
+            height: metrics.footer_height() + metrics.control_gap() + 1,
             shrink: 0.0,
-            column_gap: metrics.gap,
-            align: AlignItems::Center
+            row_gap: metrics.control_gap()
         ) [
             Section::Footer,
             GpuLayerCache,
         ] {
-            Text (
-                text: ${ if state.confirm_visible() { "A" } else { "" } },
-                width: metrics.keycap_size(),
-                height: metrics.keycap_size(),
-                shrink: 0.0,
-                bg_color: ${ if state.confirm_visible() { ACCENT } else { BACKGROUND } },
-                font: font(metrics.small),
-                font_size: metrics.small,
-                text_color: ON_ACCENT,
-                paragraph: paragraph(Center, 1)
-            ) [
-                FONT_PAINT,
-            ]
-            Text (
-                text: ${ state.confirm() },
-                width: Dimension::Content,
-                shrink: 0.0,
-                height: Dimension::Content,
-                font: font(metrics.small),
-                font_size: metrics.small,
-                text_color: SECONDARY,
-                paragraph: paragraph(Start, 1)
-            ) [
-                FONT_PAINT,
-            ]
-            keycap ("B", metrics)
-            Text (
-                text: ${ state.back() },
-                max_width: if metrics.compact { 130 } else { 210 },
-                min_width: 0,
-                height: Dimension::Content,
-                font: font(metrics.small),
-                font_size: metrics.small,
-                text_color: SECONDARY,
-                paragraph: paragraph(Start, 1)
-            ) [
-                FONT_PAINT,
-            ]
+            View (height: 1, shrink: 0.0, bg_color: DIVIDER) {
+                View (
+                    height: Dimension::percent(100),
+                    width: ${
+                        Dimension::Percent(
+                            Fixed::from_int(i32::from(state.launcher().progress())) / Fixed::from_int(10),
+                        )
+                    },
+                    bg_color: ACCENT
+                )
+            }
+            if ${ state.launcher().progress() > 0 } {
+                Row (
+                    height: metrics.footer_height(),
+                    shrink: 0.0,
+                    align: AlignItems::Center,
+                    justify: JustifyContent::Center
+                ) {
+                    label (
+                        "继续按住 X，打开附近联机",
+                        metrics.small,
+                        FOREGROUND,
+                        Center
+                    )
+                }
+            } else {
+                footer_controls (view, state, metrics)
+            }
+        }
+    }
+}
+
+#[compose]
+fn footer_controls(view: PageKey, state: model!(DisplayState), metrics: Metrics) -> Entity {
+    let confirm = state.clone();
+    let back = state.clone();
+    ui! {
+        Row (
+            height: metrics.footer_height(),
+            shrink: 0.0,
+            column_gap: metrics.control_gap(),
+            align: AlignItems::Center
+        ) {
+            if ${ state.confirm_visible() } {
+                control_key ("A", metrics, true)
+                control_label (move || confirm.confirm(), metrics)
+            }
+            if ${
+                !state.launcher().view().enabled
+                    || (state.launcher().view().tab != 0 && !state.busy())
+            } {
+                control_key ("B", metrics, false)
+                control_label (move || back.back(), metrics)
+            }
             if matches!(view.page, Page::Rooms | Page::Lobby) {
-                keycap ("X", metrics)
-                Text (
-                    "刷新",
-                    height: Dimension::Content,
-                    font: font(metrics.small),
-                    font_size: metrics.small,
-                    text_color: SECONDARY,
-                    paragraph: paragraph(Start, 1),
-                    clip_children: true
-                ) [
-                    FONT_PAINT,
-                ]
+                control_key ("X", metrics, false)
+                control_label (|| "刷新".into(), metrics)
             }
             if ${ state.can_switch_theme() } {
-                keycap ("Y", metrics)
-                Text (
-                    "主题",
-                    width: Dimension::Content,
-                    height: Dimension::Content,
-                    shrink: 0.0,
-                    font: font(metrics.small),
-                    font_size: metrics.small,
-                    text_color: SECONDARY,
-                    paragraph: paragraph(Start, 1)
-                ) [
-                    FONT_PAINT,
-                ]
+                control_key ("Y", metrics, false)
+                control_label (|| "主题".into(), metrics)
             }
             Text (
                 text: ${ state.hint() },
@@ -181,6 +190,17 @@ pub(super) fn footer(view: PageKey, state: model!(DisplayState), metrics: Metric
             ) [
                 FONT_PAINT,
             ]
+            if ${ state.launcher().view().enabled && !state.busy() } {
+                control_key ("SELECT", metrics, false)
+                control_label (|| "联机".into(), metrics)
+            }
+            if ${
+                state.launcher().view().enabled && !state.busy()
+                    && state.library_kind() != crate::model::LibraryKind::Search
+            } {
+                control_key ("START", metrics, false)
+                control_label (|| "设置".into(), metrics)
+            }
         }
     }
 }

@@ -7,6 +7,7 @@ use mirui::ui::widgets::page_view;
 use state::{DisplayHandle, PageKey};
 use style::{ACCENT_DIM, BACKGROUND, Metrics};
 
+mod actor;
 mod artwork;
 mod cache;
 mod choices;
@@ -14,7 +15,9 @@ mod chrome;
 mod composition;
 mod consoles;
 mod copy;
+mod deck;
 mod font;
+mod launcher;
 mod library;
 mod lists;
 pub(crate) mod motion;
@@ -23,6 +26,7 @@ mod pixel;
 mod rows;
 mod selection;
 mod sessions;
+mod shelf;
 mod state;
 mod style;
 mod widgets;
@@ -44,12 +48,13 @@ enum Section {
 
 pub fn install<B: Surface, F: RendererFactory<B>>(app: &mut App<B, F>) -> Result<(), String> {
     app.with_theme(crate::theme::Palette::default().theme());
-    app.with_offscreen_pool_budget(2 * 1024 * 1024);
+    app.with_offscreen_pool_budget(8 * 1024 * 1024);
     app.with_widget(page_view::view::<PageKey>());
     app.with_widget(selection::target::view());
     app.with_widget(selection::frame::view());
     app.with_widget(pixel::choice_sprite::view());
     app.with_widget(pixel::walker_sprite::view());
+    app.with_widget(pixel::actor_sprite::view());
     app.with_widget(pixel::session_sprite::view());
     app.with_widget(pixel::signal_sprite::view());
     app.with_widget(pixel::search_sprite::view());
@@ -63,6 +68,10 @@ pub fn install<B: Surface, F: RendererFactory<B>>(app: &mut App<B, F>) -> Result
 
 pub struct Scene {
     state: DisplayHandle,
+    shelf: DisplayHandle,
+    catalog: DisplayHandle,
+    room: DisplayHandle,
+    deck: deck::DeckHandle,
 }
 
 impl Scene {
@@ -70,17 +79,52 @@ impl Scene {
     pub fn navigation_intent(&self, backward: bool) {
         if backward {
             self.state.navigate_back();
+            self.catalog.navigate_back();
+            self.room.navigate_back();
         } else {
             self.state.navigate_forward();
+            self.catalog.navigate_forward();
+            self.room.navigate_forward();
         }
     }
 
     pub fn press(&self, now: u64) {
         self.state.press(now);
+        if self.deck.enabled() {
+            let active = match self.deck.layer() {
+                deck::Layer::Shelf => Some(&self.shelf),
+                deck::Layer::Catalog => Some(&self.catalog),
+                deck::Layer::Room => Some(&self.room),
+                deck::Layer::Actions => None,
+            };
+            if let Some(active) = active {
+                active.press(now);
+            }
+        }
     }
 }
 
 pub fn update(scene: &mut Scene, view: &View) -> Result<(), String> {
+    scene.deck.present(view);
+    if view.launcher.enabled {
+        for (snapshot, state, tab) in [
+            (&view.launcher_shelf, &scene.shelf, 0),
+            (&view.launcher_catalog, &scene.catalog, 1),
+        ] {
+            if let Some(snapshot) = snapshot {
+                let mut snapshot = (**snapshot).clone();
+                snapshot.launcher.enabled = true;
+                snapshot.launcher.tab = tab;
+                snapshot.launcher.navigation =
+                    view.launcher.tab != tab || !view.launcher.overlay.is_empty();
+                state.present(&snapshot);
+            } else if view.launcher.tab == tab {
+                state.present(view);
+            }
+        }
+    } else if view.return_to_launcher {
+        scene.room.present(view);
+    }
     scene.state.present(view);
 
     Ok(())
@@ -116,7 +160,15 @@ pub fn build<B: Surface, F: RendererFactory<B>>(
         crate::theme::Palette::parse(app.theme().id().as_str()).unwrap_or_default(),
         preferences.sound(),
     );
-    state.present(view);
+    let (shelf, catalog, room, deck) = app.compose(root, retained_states());
+    let mut scene = Scene {
+        state: state.clone(),
+        shelf,
+        catalog,
+        room,
+        deck,
+    };
+    update(&mut scene, view)?;
     let at = app
         .world
         .resource::<mirui::ecs::MonoClock>()
@@ -132,9 +184,29 @@ pub fn build<B: Surface, F: RendererFactory<B>>(
     );
     if !app.compose(root, has_pages()) {
         let metrics = Metrics::for_height(app.backend.viewport().logical_size().1);
-        app.compose(root, composition::shell(state.clone(), metrics));
+        app.compose(
+            root,
+            composition::shell(state.clone(), metrics, view.launcher.enabled),
+        );
     }
-    Ok(Scene { state })
+    Ok(scene)
+}
+
+#[compose]
+fn retained_states() -> (
+    DisplayHandle,
+    DisplayHandle,
+    DisplayHandle,
+    deck::DeckHandle,
+) {
+    res!(state::DisplayRuntime).with(|runtime| {
+        (
+            runtime.shelf.clone(),
+            runtime.catalog.clone(),
+            runtime.room.clone(),
+            runtime.deck.clone(),
+        )
+    })
 }
 
 #[compose]
@@ -202,4 +274,32 @@ pub fn now<B: Surface, F: RendererFactory<B>>(app: &App<B, F>) -> u64 {
         .expect("Live UI clock is installed")
         .now_ns()
         / 1_000_000
+}
+
+#[cfg(any(target_os = "linux", test))]
+pub(crate) fn launcher<B: Surface, F: RendererFactory<B>>(
+    app: &mut App<B, F>,
+) -> crate::launcher::LauncherHandle {
+    let root = app.root.unwrap_or_else(|| app.spawn_root().id());
+    app.compose(root, state::display_state()).launcher()
+}
+
+#[cfg(any(target_os = "linux", test))]
+pub fn subscribe_shelf_layout<B: Surface, F: RendererFactory<B>>(
+    app: &App<B, F>,
+    listener: impl Fn(&shelf::LayoutRequest) + 'static,
+) -> Result<(), String> {
+    let runtime = app
+        .world
+        .resource::<state::DisplayRuntime>()
+        .ok_or("Display runtime is missing")?;
+    let listener = std::rc::Rc::new(listener);
+    for state in [&runtime.state, &runtime.shelf] {
+        let listener = listener.clone();
+        state
+            .shelf()
+            .on_effect(move |request: &shelf::LayoutRequest| listener(request))
+            .map_err(|e| format!("Shelf effects: {e:?}"))?;
+    }
+    Ok(())
 }

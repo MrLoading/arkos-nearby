@@ -42,7 +42,7 @@ pub(super) fn choice(view: PageKey, state: model!(DisplayState), metrics: Metric
                         grow: 1.0,
                         min_width: 0,
                         min_height: 0,
-                        transform: ${ state.motion().card_transform(card.0) }
+                        transform: ${ state.card_motion().card_transform(card.0) }
                     ) {
                         Column (
                             grow: 1.0,
@@ -50,7 +50,7 @@ pub(super) fn choice(view: PageKey, state: model!(DisplayState), metrics: Metric
                             min_height: 0,
                             padding: metrics.card_padding(),
                             row_gap: metrics.gap,
-                            bg_color: ${ state.motion().card_color(card.0) }
+                            bg_color: ${ state.card_motion().card_color(card.0) }
                         ) [
                             FocusTarget::fixed(card.0).scoped(view.page),
                         ] {
@@ -110,7 +110,7 @@ pub(super) fn choice(view: PageKey, state: model!(DisplayState), metrics: Metric
                     shrink: 0.0,
                     bg_color: PANEL,
                     padding: Padding::all(6),
-                    transform: ${ state.motion().card_transform(2) }
+                    transform: ${ state.card_motion().card_transform(2) }
                 ) [
                     FocusTarget::fixed(2),
                 ] {

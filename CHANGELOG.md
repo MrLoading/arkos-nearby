@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-10-20
+
+- Add Nearby Launcher in Options, opening personal favorites with single-player launch and current-game multiplayer panels.
+- Arrange landscape favorite cartridges in one or two rows, with game artwork, directional paging and name/recent sorting.
+- Expand the game library beneath a miniature Favorites shelf and restore selection when returning.
+- Launch single-player with a short X press and open multiplayer with a held X press, preserving the system's game settings and saves.
+- Add illustrated game actions and settings, with character movement, themes and menu sounds.
+- Improve library browsing and panel response while retaining game artwork during background updates.
+- Keep cartridge rows and action hints stable during held-X feedback and game preparation.
+
 ## [0.8.1] - 2026-10-17
 
 - Show cached game previews immediately and preload adjacent game artwork.

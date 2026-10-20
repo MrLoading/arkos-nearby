@@ -63,7 +63,8 @@ pub(super) fn lobby(state: model!(DisplayState), metrics: Metrics) -> Entity {
                         row_gap: metrics.gap,
                         padding: Padding::all(metrics.gap),
                     ) [
-                        super::cache::GpuLayerCache,
+                        super::cache::SettledLayerCache { state: state.clone(), backdrop: false },
+                        super::deck::ActorScope::Pane(if actions { crate::model::Page::Mode } else { crate::model::Page::Lobby }),
                     ] {
                         if actions {
                             label ("仅组网 / 选择游戏", metrics.body, SECONDARY, Start)
@@ -162,12 +163,11 @@ pub(super) fn games(state: model!(DisplayState), metrics: Metrics) -> Entity {
         Row (grow: 1.0, min_height: 0, column_gap: metrics.gap) [
             Scenery::Ridge,
         ] {
-            Column (grow: 0.0, width: Dimension::percent(46), min_width: 0, min_height: 0) {
+            Column (grow: 46.0, min_width: 0, min_height: 0) {
                 game_rows (state, metrics)
             }
             Column (
-                grow: 1.0,
-                width: Dimension::percent(54),
+                grow: 54.0,
                 min_width: 0,
                 min_height: 0,
                 row_gap: metrics.gap
@@ -203,12 +203,13 @@ fn preview_label(state: model!(DisplayState), metrics: Metrics) -> Entity {
         Text (
             text: ${ title() },
             width: Dimension::percent(100),
-            height: Dimension::Content,
+            height: metrics.preview_title_height(),
             min_width: 0,
             shrink: 0.0,
             font: font(metrics.title),
             font_size: metrics.title,
             text_color: FOREGROUND,
+            bg_color: BACKGROUND,
             paragraph: paragraph(Center, 2)
         ) [
             FONT_PAINT,
@@ -255,11 +256,11 @@ pub(super) fn game_rows(state: model!(DisplayState), metrics: Metrics) -> Entity
 }
 
 #[compose]
-fn row_label(row: model!(Row), size: u16, title: bool) -> Entity {
+fn row_label(row: model!(Row), size: u16, title: bool, lines: u16) -> Entity {
     let content = row.clone();
     let colors = row;
     ui! {
-        caption (
+        super::widgets::text_block (
             move || content.label(title),
             move || {
                 if !colors.available() {
@@ -272,7 +273,8 @@ fn row_label(row: model!(Row), size: u16, title: bool) -> Entity {
             },
             size,
             Start,
-            ROW_LEADING
+            ROW_LEADING,
+            lines
         )
     }
 }
@@ -305,16 +307,16 @@ fn list_row(
         Column (
             grow: 1.0,
             min_height: metrics.row_min_height(),
-            max_height: metrics.row_height(),
+            max_height: if has_signal { metrics.row_height() } else { metrics.library_row_height() },
             min_width: 0,
-            transform: ${ state.motion().card_transform(transform_index.index()) }
+            transform: ${ state.card_motion().card_transform(transform_index.index()) }
         ) {
             Row (
                 grow: 1.0,
                 min_height: 0,
                 padding: metrics.row_padding(),
                 column_gap: metrics.gap,
-                bg_color: ${ state.motion().card_color(color_index.index()) },
+                bg_color: ${ state.card_motion().card_color(color_index.index()) },
                 align: AlignItems::Center
             ) [
                 if has_signal {
@@ -339,8 +341,19 @@ fn list_row(
                     platform_icon (marker)
                 }
                 Column (grow: 1.0, min_width: 0, justify: JustifyContent::Center) {
-                    row_label (item.clone(), metrics.row_title, true)
-                    row_label (item.clone(), metrics.row_detail, false)
+                    row_label (
+                        item.clone(),
+                        metrics.row_title,
+                        true,
+                        if has_signal { 1 } else { 2 }
+                    )
+                    if ${
+                        has_signal || state.platforms() || item.directory() || !item.available()
+                            || state.page_key().page == crate::model::Page::Candidates
+                            || state.page_key().library == crate::model::LibraryKind::Search
+                    } {
+                        row_label (item.clone(), metrics.row_detail, false, 1)
+                    }
                 }
                 if ${ !has_signal && favorite.favorite() } {
                     Image (

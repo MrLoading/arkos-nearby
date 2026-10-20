@@ -188,7 +188,45 @@ mod device {
         Ok(())
     }
 
+    pub fn launch() -> Result<()> {
+        session::identity(false)?;
+        let pid = fs::read_dir("/proc")?
+            .flatten()
+            .find_map(|entry| {
+                fs::read_link(entry.path().join("exe"))
+                    .ok()
+                    .filter(|exe| exe == Path::new("/usr/bin/emulationstation/emulationstation"))
+                    .and_then(|_| entry.file_name().to_string_lossy().parse::<u32>().ok())
+            })
+            .ok_or("Original frontend is unavailable")?;
+        cmd(&[
+            "systemd-run",
+            "--collect",
+            "--unit=arkos-nearby-launcher",
+            "--property=ExecStopPost=/opt/arkos-nearby/arkos-nearby home-resume",
+            "--property=KillMode=control-group",
+            "--property=TimeoutStopSec=10",
+            session::BINARY,
+            "launcher-open",
+            &pid.to_string(),
+        ])?;
+        Ok(())
+    }
+
+    pub fn open_launcher(pid: u32) -> Result<()> {
+        // The Options caller must return before its frontend service is stopped.
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !foreground(pid) && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(50));
+        }
+        open_mode(pid, true)
+    }
+
     pub fn open(pid: u32) -> Result<()> {
+        open_mode(pid, false)
+    }
+
+    fn open_mode(pid: u32, launcher: bool) -> Result<()> {
         session::identity(false)?;
         require(
             settled_foreground(pid),
@@ -215,7 +253,11 @@ mod device {
             &json!({"definition_sha256":crate::content::digest(Path::new(UNIT))?}),
         )?;
         cmd(&["systemctl", "stop", ES])?;
-        let result = crate::manual::run_manual();
+        let result = if launcher {
+            crate::launcher::run()
+        } else {
+            crate::manual::run_manual()
+        };
         if result.is_ok() {
             while session::state().is_ok_and(|state| {
                 state.purpose == crate::purpose::SessionPurpose::Game && !state.closed()
@@ -258,7 +300,7 @@ mod device {
 }
 
 #[cfg(target_os = "linux")]
-pub use device::{activate, listen, open, resume};
+pub use device::{activate, launch, listen, open, open_launcher, resume};
 
 #[cfg(not(target_os = "linux"))]
 pub fn activate() -> Result<bool> {
@@ -272,6 +314,14 @@ pub fn listen(_: u32) -> Result<()> {
 #[cfg(not(target_os = "linux"))]
 pub fn open(_: u32) -> Result<()> {
     Err("Home shortcut requires Linux".into())
+}
+#[cfg(not(target_os = "linux"))]
+pub fn launch() -> Result<()> {
+    Err("Launcher requires Linux".into())
+}
+#[cfg(not(target_os = "linux"))]
+pub fn open_launcher(_: u32) -> Result<()> {
+    Err("Launcher requires Linux".into())
 }
 #[cfg(not(target_os = "linux"))]
 pub fn resume() -> Result<()> {

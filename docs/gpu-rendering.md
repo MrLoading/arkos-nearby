@@ -4,7 +4,7 @@
 
 ## 构建环境
 
-需要 Rust 1.92、`aarch64-unknown-linux-gnu` 标准库、ARM64 GNU C 链接器及与设备兼容的 sysroot。SDL2 源码随 Release 提供；锁定的 Rust 依赖位于 `arkos-nearby-0.8.1-rust-sources.tar.gz`。
+需要 Rust 1.92、`aarch64-unknown-linux-gnu` 标准库、ARM64 GNU C 链接器及与设备兼容的 sysroot。SDL2 源码随 Release 提供；锁定的 Rust 依赖位于 `arkos-nearby-0.9.0-rust-sources.tar.gz`。
 
 使用现有的 ARM64 CMake 工具链文件构建 SDL2。工具链应设置 Linux、aarch64、交叉编译器和 sysroot，并将库、头文件及包查询限制到 sysroot。sysroot 需包含 PulseAudio 和 ALSA 开发头文件与库。构建结果中的 `SDL_config.h` 应定义 `SDL_AUDIO_DRIVER_PULSEAUDIO` 和 `SDL_AUDIO_DRIVER_ALSA`，动态库名分别为 `libpulse.so.0` 和 `libasound.so.2`。
 

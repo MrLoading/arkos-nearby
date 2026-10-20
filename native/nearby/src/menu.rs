@@ -20,6 +20,8 @@ pub trait Backend: Send + Sync + 'static {
 
 enum Event {
     Input(String, f64),
+    ShelfLayout(crate::catalog::shelf::Grid, bool),
+    Launcher(String, String, f64),
     FrameReady,
     Eof,
     Status(u64, Value),
@@ -84,13 +86,86 @@ mod display;
 pub struct MenuSession {
     display: display::Display,
     lobby_flow: Option<Flow>,
+    launcher: bool,
 }
 
 impl MenuSession {
+    pub fn launcher_busy(
+        &mut self,
+        controller: &mut crate::launcher::Controller,
+        message: &str,
+    ) -> Result<()> {
+        let mut view = controller.view();
+        view["busy"] = true.into();
+        view["status"] = message.into();
+        view["launcher"]["key"] = "".into();
+        self.display.begin_screen();
+        self.display.present(view)
+    }
+    pub fn open_launcher() -> Result<Self> {
+        Ok(Self {
+            display: display::Display::open_launcher()?,
+            lobby_flow: None,
+            launcher: true,
+        })
+    }
+    pub fn choose_launcher(
+        &mut self,
+        controller: &mut crate::launcher::Controller,
+    ) -> Result<crate::launcher::Intent> {
+        let mut sender = self.display.begin_screen();
+        let job = controller.browser().index_job();
+        let replies = sender.clone();
+        thread::spawn(move || replies.send(Event::Indexed(job.run())));
+        while !self.display.stopped() {
+            if controller.changed_tab {
+                controller.changed_tab = false;
+                sender = self.display.begin_screen();
+                let job = controller.browser().index_job();
+                let replies = sender.clone();
+                thread::spawn(move || replies.send(Event::Indexed(job.run())));
+            }
+            if let Some(job) = controller.browser().search_job() {
+                let replies = sender.clone();
+                thread::spawn(move || replies.send(Event::Searched(job.run())));
+            }
+            self.display.present(controller.view())?;
+            let outcome = match self.display.receive() {
+                Ok(Some(Event::Input(action, _))) => controller.input(&action)?,
+                Ok(Some(Event::Launcher(action, key, _))) => controller.gesture(&action, &key)?,
+                Ok(Some(Event::ShelfLayout(grid, true))) => {
+                    controller.shelf_layout(grid);
+                    None
+                }
+                Ok(Some(Event::Indexed(index))) => {
+                    controller.browser().indexed(index);
+                    None
+                }
+                Ok(Some(Event::Searched(result))) => {
+                    controller.browser().searched(result);
+                    None
+                }
+                Ok(Some(Event::FrameReady)) => {
+                    log(json!({"phase":"launcher_frame_submitted"}))?;
+                    None
+                }
+                Ok(Some(Event::Eof)) => return Err("Launcher display closed".into()),
+                Ok(_) | Err(mpsc::RecvTimeoutError::Timeout) => None,
+                Err(error) => return Err(error.into()),
+            };
+            if let Some(intent) = outcome {
+                log(json!({"phase":"launcher_action","last_view":self.display.previous()}))?;
+                return Ok(intent);
+            }
+        }
+        log(json!({"phase":"launcher_exit","last_view":self.display.previous()}))?;
+        Ok(crate::launcher::Intent::Exit)
+    }
     pub fn open() -> Result<Self> {
         Ok(Self {
             display: display::Display::open()?,
             lobby_flow: None,
+            launcher: false,
         })
     }
     pub fn run_with_fallback(
@@ -226,6 +301,7 @@ impl MenuSession {
                     }
                     self.display.present(browser.view())?;
                     match self.display.receive() {
+                        Ok(Some(Event::ShelfLayout(grid, false))) => browser.shelf_layout(grid),
                         Ok(Some(Event::Input(action, at))) if at >= browser.input_epoch => {
                             if let Some(entry) = browser.dispatch(&action)? {
                                 let sender = sender.clone();
@@ -314,7 +390,9 @@ impl MenuSession {
                         });
                     }
                 }
-                self.display.present(flow.view())?;
+                let mut view = flow.view();
+                view["return_to_launcher"] = self.launcher.into();
+                self.display.present(view)?;
                 match self.display.receive() {
                     Ok(Some(Event::Input(action, at))) => {
                         if !self.display.stopped() {
@@ -340,7 +418,13 @@ impl MenuSession {
                     Ok(Some(Event::Action(request, result, failed))) => {
                         flow.complete(&request, result, failed)
                     }
-                    Ok(Some(Event::Prepared(_) | Event::Indexed(_) | Event::Searched(_))) => {}
+                    Ok(Some(
+                        Event::Prepared(_)
+                        | Event::Indexed(_)
+                        | Event::Searched(_)
+                        | Event::ShelfLayout(_, _)
+                        | Event::Launcher(_, _, _),
+                    )) => {}
                     Ok(None) | Err(mpsc::RecvTimeoutError::Timeout) => {}
                     Err(error) => return Err(error.into()),
                 }

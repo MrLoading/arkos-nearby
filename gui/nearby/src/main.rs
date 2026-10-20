@@ -1,4 +1,7 @@
 mod feedback;
+// Host capture renders launcher state without a physical input source.
+#[cfg_attr(not(any(target_os = "linux", test)), allow(dead_code))]
+mod launcher;
 mod model;
 #[cfg(target_os = "linux")]
 mod platform;
@@ -285,6 +288,18 @@ fn live() -> Result<(), String> {
     app.add_plugin(mirui::app::plugins::StdInstantClockPlugin);
     let preferences = sound::install(&mut app);
     let sound = sound::register(&mut app)?;
+    let launcher = render::launcher(&mut app);
+    let intents = Rc::new(RefCell::new(Vec::new()));
+    let pending = Rc::clone(&intents);
+    launcher
+        .on_effect(move |intent: &launcher::Intent| pending.borrow_mut().push(intent.clone()))
+        .map_err(|error| format!("Launcher effects: {error:?}"))?;
+    let shelf_layouts = Rc::new(RefCell::new(Vec::new()));
+    let pending_layouts = Rc::clone(&shelf_layouts);
+    render::subscribe_shelf_layout(&app, move |request| {
+        pending_layouts.borrow_mut().push(*request)
+    })?;
+    let mut gamepad = launcher::input::Input::open().map_err(|error| error.to_string())?;
     let settings = render::settings(&mut app);
     let palette = theme::Palette::load(Path::new(theme::SETTINGS));
     settings.restore(palette, preferences);
@@ -355,7 +370,39 @@ fn live() -> Result<(), String> {
                 return Err(format!("Framebuffer pwrite: {error}"));
             }
         }
-        for mut action in terminal.poll().map_err(|e| e.to_string())? {
+        for request in shelf_layouts.borrow_mut().drain(..) {
+            let mut output = io::stdout().lock();
+            serde_json::to_writer(&mut output, &request).map_err(|e| e.to_string())?;
+            writeln!(output).map_err(|e| e.to_string())?;
+            output.flush().map_err(|e| e.to_string())?;
+        }
+        let mut actions = terminal.poll().map_err(|e| e.to_string())?;
+        if !actions.is_empty() {
+            launcher.cancel();
+        }
+        if let Some(input) = &mut gamepad {
+            actions.extend(
+                input
+                    .poll(&launcher, render::now(&app))
+                    .map_err(|e| e.to_string())?,
+            );
+        }
+        for intent in intents.borrow_mut().drain(..) {
+            match intent {
+                launcher::Intent::Action(action) => actions.push(action),
+                launcher::Intent::Game { key, multiplayer } => {
+                    sound.input(model::Action::Confirm, render::now(&app));
+                    if let Some(scene) = &scene {
+                        scene.press(render::now(&app));
+                    }
+                    let mut output = io::stdout().lock();
+                    serde_json::to_writer(&mut output, &serde_json::json!({"event":"launcher", "action":if multiplayer {"multiplayer"}else{"launch"}, "key":key})).map_err(|e|e.to_string())?;
+                    writeln!(output).map_err(|e| e.to_string())?;
+                    output.flush().map_err(|e| e.to_string())?;
+                }
+            }
+        }
+        for mut action in actions {
             let library = view
                 .as_ref()
                 .is_some_and(|view| view.page == model::Page::Games);
@@ -370,6 +417,24 @@ fn live() -> Result<(), String> {
                     render::cycle_theme(&mut app, scene)?;
                 }
                 continue;
+            }
+            if action == model::Action::Confirm
+                && let Some(current) = &view
+                && current.launcher.overlay_kind == "system"
+            {
+                match current.launcher.selected {
+                    0 => {
+                        settings.cycle_theme();
+                        app.set_theme(settings.palette().theme())
+                            .map_err(|e| format!("Theme: {e:?}"))?;
+                    }
+                    1 => {
+                        let mut preferences = settings.sound();
+                        preferences.enabled = !preferences.enabled;
+                        settings.set_sound(preferences);
+                    }
+                    _ => {}
+                }
             }
             sound.input(action, render::now(&app));
             if let Some(scene) = scene.as_ref() {

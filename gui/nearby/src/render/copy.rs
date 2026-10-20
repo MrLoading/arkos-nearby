@@ -103,6 +103,7 @@ pub(super) fn next_step(view: &View) -> &str {
     if view.network_only {
         return match phase(view) {
             Phase::ResolvingGame | Phase::SelectingGame => "正在查找对应游戏",
+            Phase::NetworkConnected if view.return_to_launcher => "返回收藏后，连接继续保持",
             Phase::NetworkConnected => "返回系统后，连接继续保持",
             Phase::NetworkConfirming => "正在确认双方的局域网连接",
             Phase::NetworkReconnecting => "持续失联后会恢复原 Wi-Fi",
@@ -154,7 +155,11 @@ pub(super) fn next_step(view: &View) -> &str {
 
 pub(super) fn button_text(view: &View) -> &str {
     if view.network_only && view.connected && view.phase == Phase::NetworkConnected {
-        return "保持连接，返回系统";
+        return if view.return_to_launcher {
+            "保持连接，返回收藏"
+        } else {
+            "保持连接，返回系统"
+        };
     }
     match phase(view) {
         Phase::HostReady => {
@@ -185,7 +190,7 @@ pub(super) fn peer_text(view: &View) -> &str {
 }
 
 pub(super) fn status_text(view: &View) -> &str {
-    if !view.status.is_empty() {
+    if !view.status.is_empty() || view.launcher.enabled || view.page == Page::Games {
         return &view.status;
     }
     match view.page {
@@ -205,6 +210,22 @@ pub(super) fn status_text(view: &View) -> &str {
 }
 
 pub(super) fn hint_text(view: &View) -> &str {
+    if view.launcher.enabled && !view.status.is_empty() {
+        return &view.status;
+    }
+    if view.launcher.enabled && !view.library.keyboard {
+        return if view.library.kind == crate::model::LibraryKind::Favorites {
+            if view.launcher.key.is_empty() {
+                "Y 排序"
+            } else {
+                "X 游玩 / 长按联机 · Y 排序"
+            }
+        } else if !view.launcher.key.is_empty() {
+            "X 游玩 / 长按联机 · Y 收藏"
+        } else {
+            "Y 搜索"
+        };
+    }
     if view.page == Page::Games && !view.busy {
         return match view.library.kind {
             crate::model::LibraryKind::Platforms => "Y 搜索 · L/R 翻页",
@@ -252,6 +273,22 @@ pub(super) fn hint_text(view: &View) -> &str {
 }
 
 pub(super) fn confirm_text(view: &View) -> &str {
+    if view.launcher.enabled {
+        if view.busy || view.launcher.navigation {
+            return "";
+        }
+        if view.launcher.tab == 0
+            && view
+                .entries
+                .get(view.selected)
+                .is_some_and(|row| row.directory && row.icon == "library" && row.available)
+        {
+            return "游戏库";
+        }
+    }
+    if view.launcher.enabled && !view.library.keyboard && !view.launcher.key.is_empty() {
+        return "操作";
+    }
     if view.page == Page::Games && view.library.keyboard && !view.busy {
         return "输入";
     }
@@ -268,7 +305,11 @@ pub(super) fn confirm_text(view: &View) -> &str {
         };
     }
     if view.network_only && view.connected && view.phase == Phase::NetworkConnected && !view.busy {
-        return "返回系统";
+        return if view.return_to_launcher {
+            "返回收藏"
+        } else {
+            "返回系统"
+        };
     }
     match phase(view) {
         Phase::RestoreFailed => "重试",

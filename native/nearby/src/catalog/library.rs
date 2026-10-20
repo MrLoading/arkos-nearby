@@ -117,7 +117,11 @@ impl Library {
 }
 
 pub(crate) fn record_play(context: &Context) {
-    if let Err(error) = Library::used(&PathBuf::from(INSTALL), &context.game_path) {
+    record_path(&context.game_path);
+}
+
+pub(crate) fn record_path(path: &Path) {
+    if let Err(error) = Library::used(&PathBuf::from(INSTALL), path) {
         eprintln!("Could not record library use: {error}");
     }
 }
@@ -142,6 +146,7 @@ mod tests {
             platform: "nes".into(),
             count: 0,
             image: None,
+            extensions: String::new(),
         };
         Library::toggle(&root, &entry).unwrap();
         Library::used(&root, &entry.path).unwrap();

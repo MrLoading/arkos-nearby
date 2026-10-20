@@ -2,7 +2,7 @@
 
 ## 下载与校验
 
-两台掌机安装同一个版本。下载 [arkos-nearby-0.8.1-arm64.tar.gz](https://github.com/W-Mai/arkos-nearby/releases/download/v0.8.1/arkos-nearby-0.8.1-arm64.tar.gz) 和 [SHA256SUMS](https://github.com/W-Mai/arkos-nearby/releases/download/v0.8.1/SHA256SUMS)。在下载目录执行 `sha256sum --ignore-missing -c SHA256SUMS`；macOS 可使用 `shasum -a 256 -c SHA256SUMS` 并只核对实际下载的文件。
+两台掌机安装同一个版本。下载 [arkos-nearby-0.9.0-arm64.tar.gz](https://github.com/W-Mai/arkos-nearby/releases/download/v0.9.0/arkos-nearby-0.9.0-arm64.tar.gz) 和 [SHA256SUMS](https://github.com/W-Mai/arkos-nearby/releases/download/v0.9.0/SHA256SUMS)。在下载目录执行 `sha256sum --ignore-missing -c SHA256SUMS`；macOS 可使用 `shasum -a 256 -c SHA256SUMS` 并只核对实际下载的文件。
 
 解压后包含 `arkos-nearby`、`Install Nearby Multiplayer.sh`、安装说明、许可证和可执行文件校验值。
 
@@ -21,6 +21,14 @@
 在平台列表按 Y 打开搜索，使用方向键和 A 输入游戏名、文件名或中文名的拼音／首字母。按 Y 退格，按 START 切换键盘与结果列表，按 B 收起键盘或返回平台列表。在结果列表中按 X 收藏，按 A 选择游戏并进入创建／加入房间。
 
 收藏与最近使用记录保存在掌机上。再次打开游戏库时会恢复收藏和排序方式。
+
+## 启动器
+
+Options → Nearby Launcher 直接打开个人收藏。横向卡带按可用空间排成一排或两排，方向键移动选择，在同排边缘继续按左右可翻页。选中收藏末尾的游戏库图标，按 A 展开游戏库，收藏架缩小并保留在上方；B 逐级返回，恢复原来的选中卡片。SELECT 打开附近联机面板。
+
+选中游戏后，短按 X 并松开启动单机，长按 X 打开当前游戏的联机面板；A 打开游戏操作，可将游戏移出收藏。在游戏库的游戏列表和搜索结果中按 Y 收藏，收藏页按 Y 排序，平台列表按 Y 搜索。空平台与空文件夹会自动隐藏。游戏退出后返回刚才的列表和选中位置。
+
+单机沿用系统的模拟器设置、游戏存档与即时存档位置。START 打开主题、音效、直连网络管理和退出菜单；选择「返回原系统」回到系统主页。
 
 ## 仅组网
 
@@ -64,6 +72,6 @@ sudo /opt/arkos-nearby/arkos-nearby uninstall
 
 ## 安装内容
 
-运行程序、图形界面、核心查询器、无线资产、许可证与诊断日志位于 `/opt/arkos-nearby/`。Options 入口为 `/opt/system/Nearby Multiplayer.sh`。安装器接入已识别的 RetroArch 启动脚本 X 分支，以及 EmulationStation 的 FN + X 主页快捷键；原始脚本保存在 `original-launch/`，卸载时恢复。
+运行程序、图形界面、核心查询器、无线资产、许可证与诊断日志位于 `/opt/arkos-nearby/`。Options 入口为 `/opt/system/Nearby Multiplayer.sh` 和 `/opt/system/Nearby Launcher.sh`。安装器接入已识别的 RetroArch 启动脚本 X 分支，以及 EmulationStation 的 FN + X 主页快捷键；原始脚本保存在 `original-launch/`，卸载时恢复。
 
 创建或加入房间时加载联机驱动，结束联机后恢复原驱动和之前连接的 Wi-Fi。仅组网完成后选择「保持连接，返回系统」会保留网络。临时会话文件位于 `/run/arkos-nearby-rust/`，诊断日志保存在 `/opt/arkos-nearby/logs/`。

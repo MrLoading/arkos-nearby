@@ -133,6 +133,36 @@ mod tests {
     use super::*;
 
     #[test]
+    fn menu_foregrounds_have_readable_contrast_in_every_palette() {
+        fn luminance(color: Color) -> f64 {
+            let linear = |channel: u8| {
+                let value = f64::from(channel) / 255.0;
+                if value <= 0.04045 {
+                    value / 12.92
+                } else {
+                    ((value + 0.055) / 1.055).powf(2.4)
+                }
+            };
+            linear(color.r) * 0.2126 + linear(color.g) * 0.7152 + linear(color.b) * 0.0722
+        }
+        for palette in Palette::ALL {
+            let theme = palette.theme();
+            for (foreground, background) in [
+                (ColorToken::OnPrimary, ColorToken::Primary),
+                (ColorToken::OnSurface, ColorToken::SurfaceVariant),
+            ] {
+                let a = luminance(theme.resolve(foreground));
+                let b = luminance(theme.resolve(background));
+                let ratio = (a.max(b) + 0.05) / (a.min(b) + 0.05);
+                assert!(
+                    ratio >= 4.5,
+                    "{palette:?}: {foreground:?} on {background:?} has contrast {ratio}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn preferences_round_trip_and_unknown_values_use_default() {
         let path = std::env::temp_dir().join(format!("nearby-theme-{}", std::process::id()));
         assert_eq!(Palette::load(&path), Palette::Forest);

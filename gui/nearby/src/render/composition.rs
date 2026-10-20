@@ -1,3 +1,5 @@
+use super::launcher::deck as launcher_deck;
+use super::launcher::overlay;
 use super::{
     pages::page,
     selection,
@@ -23,7 +25,8 @@ fn create_page(
 fn mounted_page(view: PageKey, state: model!(DisplayState), metrics: Metrics) -> Entity {
     ui! {
         Column (grow: 1.0, min_height: 0, bg_color: BACKGROUND, clip_children: true) {
-            page_contents (view, state, metrics)
+            page_contents (view, state.clone(), metrics)
+            overlay (state.clone(), metrics)
         }
     }
 }
@@ -33,6 +36,13 @@ fn page_contents(view: PageKey, state: model!(DisplayState), metrics: Metrics) -
     let body = ui! {
         page (view, state, metrics)
     };
+    ui! {
+        focus_frame (body, view, state)
+    }
+}
+
+#[compose]
+pub(super) fn focus_frame(body: Entity, view: PageKey, state: model!(DisplayState)) -> Entity {
     ui! {
         View (
             position: Position::Absolute,
@@ -71,15 +81,43 @@ fn page_contents(view: PageKey, state: model!(DisplayState), metrics: Metrics) -
 }
 
 #[compose]
-pub(super) fn shell(state: model!(DisplayState), metrics: Metrics) -> Entity {
+pub(super) fn shell(state: model!(DisplayState), metrics: Metrics, launcher: bool) -> Entity {
+    let (shelf, catalog, room, deck) = res!(super::state::DisplayRuntime).with(|runtime| {
+        (
+            runtime.shelf.clone(),
+            runtime.catalog.clone(),
+            runtime.room.clone(),
+            runtime.deck.clone(),
+        )
+    });
+    if launcher {
+        ui! {
+            Column (id: "nearby_pages", grow: 1.0, min_height: 0, clip_children: true) {
+                launcher_deck (state, shelf, catalog, room, deck, metrics)
+            }
+        }
+    } else {
+        ui! {
+            PageView (
+                id: "nearby_pages",
+                grow: 1.0,
+                min_height: 0,
+                bg_color: BACKGROUND,
+                page: ${ state.page_key() },
+                transition: ${ state.transition() }
+            ) on CreatePage(create_page::callback(state.clone(), metrics))
+        }
+    }
+}
+
+#[compose]
+pub(super) fn room_pages(state: model!(DisplayState), metrics: Metrics) -> Entity {
     ui! {
         PageView (
-            id: "nearby_pages",
             grow: 1.0,
             min_height: 0,
-            bg_color: BACKGROUND,
             page: ${ state.page_key() },
             transition: ${ state.transition() }
-        ) on CreatePage(create_page::callback(state, metrics))
+        ) on CreatePage(create_page::callback(state.clone(), metrics))
     }
 }
